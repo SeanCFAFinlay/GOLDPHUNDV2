@@ -3,11 +3,13 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 
 interface FR { score: number; components: Record<string, number>; metadata: Record<string, any>; }
 interface Pos { ticket: number; symbol: string; direction: string; volume: number; open_price: number; current_price: number; sl?: number; tp?: number; profit: number; swap: number; open_time: string; }
-interface Sig { timestamp: string; symbol: string; price: number; bid: number; ask: number; spread: number; master_score: number; state: string; bull_probability: number; bear_probability: number; confidence_label: string; confidence_pct: number; factors: Record<string, FR>; risk_level: string; key_level: number; invalidation: number; breakout_watch: string | null; reversal_watch: string | null; no_trade: boolean; no_trade_reason: string | null; data_quality: string; tf_biases: Record<string, number>; alert_fired: boolean; }
+interface Sig { timestamp: string; symbol: string; price: number; bid: number; ask: number; spread: number; master_score: number; state: string; bull_probability: number; bear_probability: number; confidence_label: string; confidence_pct: number; factors: Record<string, FR>; risk_level: string; key_level: number; invalidation: number; breakout_watch: string | null; reversal_watch: string | null; no_trade: boolean; no_trade_reason: string | null; data_quality: string; tf_biases: Record<string, number>; alert_fired: boolean; activeRegime?: string; }
+interface EngineVote { engine: string; direction: string; score: number; confidence: number; weight: number; }
+interface Consensus { direction: string; agreement: string; netScore: number; votes: EngineVote[]; divergenceFlag: boolean; timestamp: string; }
 interface Alrt { id: string; timestamp: string; severity: string; title: string; body: string; signal_state: string; master_score: number; trigger_reason: string; channels_sent: string[]; telegram_sent: boolean; }
 interface Acct { balance: number; equity: number; margin: number; free_margin: number; profit: number; positions: Pos[]; }
 interface Health { mt5_connected: boolean; mt5_last_heartbeat: string | null; mt5_last_payload: string | null; total_payloads: number; alerts_count?: number; open_positions: number; daily_pnl: number; }
-interface Dash { timestamp: string; trade_mode: string; health: Health; latest_signal: Sig | null; scan_history: Sig[]; recent_alerts: Alrt[]; trade_history: any[]; market_cache: Record<string, any>; account: Acct | null; notification_channels: Record<string, boolean>; gold_logic?: GoldLogicSnapshot | null; version?: string; }
+interface Dash { timestamp: string; trade_mode: string; health: Health; latest_signal: Sig | null; scan_history: Sig[]; recent_alerts: Alrt[]; trade_history: any[]; market_cache: Record<string, any>; account: Acct | null; notification_channels: Record<string, boolean>; gold_logic?: GoldLogicSnapshot | null; spectre?: SpectreOutput | null; consensus?: Consensus | null; version?: string; }
 interface SpectreOutput { timestamp: string; symbol: string; price: number; spectre_score: number; state: string; confidence: string; ichimoku: {score:number;meta:Record<string,any>}; squeeze: {score:number;meta:Record<string,any>}; smart_money: {score:number;meta:Record<string,any>}; fibonacci: {score:number;meta:Record<string,any>}; oscillators: {score:number;meta:Record<string,any>}; weights: Record<string,number>; data_quality: string; }
 
 // Gold Logic AI Types (V2)
@@ -18,7 +20,7 @@ interface GoldLogicSnapshot {
   masterBias: string; probabilityUp: number; confidence: number;
   regime: string; tradeQuality: string; riskState: string;
   categoryScores: { trend: number; momentum: number; volatility: number; structure: number; macro: number };
-  timeframeScores: { m5: number; m10: number; m15: number; h1: number; h4: number };
+  timeframeScores: { m5: number | null; m10: number; m15: number | null; h1: number; h4: number };
   indicators: GoldIndicatorRow[];
   scenarios: { bull: GoldScenarioBlock; bear: GoldScenarioBlock; noTrade: { reason: string; conditionToImprove: string } };
   alerts: string[]; engineVersion: string; dataQuality: string;
@@ -92,6 +94,37 @@ function SChart({ hist }: { hist: Sig[] }) {
 }
 
 const LOT_SIZES = [0.01, 0.05, 0.10, 0.25, 0.50, 1.00];
+
+// Consensus & Regime helpers
+const consensusDirColor = (d: string) => d === "UP" ? C.bu : d === "DOWN" ? C.be : C.nu;
+const consensusDirArrow = (d: string) => d === "UP" ? "↑" : d === "DOWN" ? "↓" : "→";
+const consensusAgreementColor = (a: string) => a === "STRONG_CONSENSUS" ? C.bb : a === "LEAN" ? C.bu : a === "MIXED" ? C.wa : C.be;
+const regimeColor = (r: string) => r === "TREND" ? C.ac : r === "BREAKOUT" ? C.pu : r === "COMPRESSION" ? C.wa : C.nu;
+const velocityColor = (v: string) => v === "accelerating" ? C.bu : v === "decelerating" ? C.be : C.nu;
+
+function ConsensusBanner({ consensus }: { consensus: Consensus }) {
+  const dirCol = consensusDirColor(consensus.direction);
+  const agrCol = consensusAgreementColor(consensus.agreement);
+  return (
+    <div style={{ background: `${dirCol}0d`, borderBottom: `1px solid ${dirCol}22`, padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 20, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontFamily: F.m, fontSize: 20, color: dirCol }}>{consensusDirArrow(consensus.direction)}</span>
+        <span style={{ fontFamily: F.s, fontSize: 11, color: C.t2 }}>CONSENSUS</span>
+        <Bdg t={consensus.agreement.replace(/_/g, " ")} c={agrCol} sz="md" />
+        <span style={{ fontFamily: F.m, fontSize: 14, fontWeight: 800, color: dirCol }}>{consensus.netScore > 0 ? "+" : ""}{consensus.netScore}</span>
+      </div>
+      <div style={{ display: "flex", gap: 12 }}>
+        {consensus.votes.map(v => (
+          <div key={v.engine} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ fontFamily: F.m, fontSize: 9, color: C.t3, textTransform: "uppercase" }}>{v.engine === "signal" ? "SIG" : v.engine === "gold_logic" ? "GL" : "SPE"}</span>
+            <span style={{ fontFamily: F.m, fontSize: 11, fontWeight: 700, color: consensusDirColor(v.direction) }}>{consensusDirArrow(v.direction)}{Math.abs(v.score).toFixed(0)}</span>
+          </div>
+        ))}
+      </div>
+      {consensus.divergenceFlag && <Bdg t="DIVERGENCE" c={C.wa} sz="sm" />}
+    </div>
+  );
+}
 
 function TfRow({ tf, bias }: { tf: string; bias: number }) {
   const isBull = bias > 0.15, isBear = bias < -0.15;
@@ -816,6 +849,7 @@ export default function PhundDashboard() {
       const json = await r.json();
       setData(json);
       if (json.gold_logic) setGoldLogicData(json.gold_logic);
+      if (json.spectre) setSpectreData(json.spectre);
       setErr(null);
     } catch (e: any) { setErr(e.message); } finally { setLoading(false); setCd(10); }
   }, []);
@@ -895,6 +929,7 @@ export default function PhundDashboard() {
             <span style={{ fontFamily: F.m, fontSize: 12, color: C.t2 }}>XAUUSD</span>
           </div>
           {s && <Bdg t={sl(s.state)} c={sc} sz="lg" />}
+          {s?.activeRegime && <Bdg t={s.activeRegime} c={regimeColor(s.activeRegime)} sz="md" />}
           {s?.no_trade && <Bdg t="⊘ NO TRADE" c={C.wa} sz="md" />}
           {s?.breakout_watch && <Bdg t={`⚡ BREAKOUT ${s.breakout_watch.toUpperCase()}`} c={C.pu} sz="md" />}
           {s?.reversal_watch && <Bdg t={`↩ REVERSAL ${s.reversal_watch.toUpperCase()}`} c="#fb923c" sz="md" />}
@@ -944,6 +979,9 @@ export default function PhundDashboard() {
           ⚠ {s.no_trade ? `NO TRADE — ${s.no_trade_reason}` : `${s.risk_level.toUpperCase().replace(/_/g, " ")} — Caution`}
         </div>
       )}
+      {/* CONSENSUS BANNER */}
+      {data?.consensus && <ConsensusBanner consensus={data.consensus} />}
+
       {!h?.mt5_connected && (
         <div style={{ background: `${C.ac}10`, borderBottom: `1px solid ${C.ac}33`, padding: "8px 16px", fontFamily: F.s, fontSize: 12, color: C.ac }}>
           <strong>MT5 not connected.</strong> Attach PhundBridge EA to XAUUSD M10 chart in OX Securities MT5.
@@ -1043,6 +1081,15 @@ export default function PhundDashboard() {
             <DR l="ROC (5)" v={`${(s.factors.momentum.metadata.roc || 0).toFixed(3)}%`} c={(s.factors.momentum.metadata.roc || 0) > 0 ? C.bu : C.be} />
             <DR l="ADX" v={(s.factors.momentum.metadata.adx?.adx || 0).toFixed(1)} c={(s.factors.momentum.metadata.adx?.adx || 0) > 25 ? C.ac : C.t3} />
             <DR l="Pressure" v={s.factors.momentum.metadata.candlePressure || "—"} c={s.factors.momentum.metadata.candlePressure === "bullish" ? C.bu : s.factors.momentum.metadata.candlePressure === "bearish" ? C.be : C.nu} m={false} />
+            {s.factors.momentum.metadata.velocity && (
+              <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontFamily: F.s, fontSize: 10, color: C.t3 }}>Velocity:</span>
+                <Bdg t={s.factors.momentum.metadata.velocity.toUpperCase()} c={velocityColor(s.factors.momentum.metadata.velocity)} sz="sm" />
+                {s.factors.momentum.metadata.momentumSlope !== undefined && (
+                  <span style={{ fontFamily: F.m, fontSize: 10, color: C.t3 }}>({(s.factors.momentum.metadata.momentumSlope || 0).toFixed(2)})</span>
+                )}
+              </div>
+            )}
           </>) : <NoData />}
         </Card>
 
@@ -1067,6 +1114,12 @@ export default function PhundDashboard() {
             <div style={{ marginTop: 6, borderTop: `1px solid ${C.bd}33`, paddingTop: 5 }}>
               <DR l="Session" v={s.factors.session?.metadata?.label || "—"} c={(s.factors.session?.score || 0) > 0 ? C.bu : C.wa} m={false} />
               <DR l="Session Score" v={`${(s.factors.session?.score || 0) > 0 ? "+" : ""}${(s.factors.session?.score || 0).toFixed(0)}`} />
+              {s.factors.session?.metadata?.dst && (
+                <div style={{ marginTop: 4, display: "flex", gap: 8 }}>
+                  <Bdg t={`US DST: ${s.factors.session.metadata.dst.us ? "ON" : "OFF"}`} c={C.t3} sz="sm" />
+                  <Bdg t={`EU DST: ${s.factors.session.metadata.dst.eu ? "ON" : "OFF"}`} c={C.t3} sz="sm" />
+                </div>
+              )}
             </div>
             <div style={{ marginTop: 6, borderTop: `1px solid ${C.bd}33`, paddingTop: 5 }}>
               <DR l="Event Risk" v={s.factors.event_risk?.metadata?.severity || "none"} c={(s.factors.event_risk?.score || 0) < -20 ? C.wa : C.bu} m={false} />
