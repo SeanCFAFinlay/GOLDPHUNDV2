@@ -4,24 +4,39 @@
 // ============================================================
 
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "crypto";
 import { runSignalEngine } from "@/lib/signal-engine";
 import { sendTelegram, formatAlert, shouldFireAlert, makeAlertRecord } from "@/lib/telegram";
 import { evaluateTradeDecision, executePaperTrade, buildTradeInstruction, updatePaperTrades, DEFAULT_RISK_CONFIG, type AccountSnapshot } from "@/lib/trade-engine";
 import { validateMarketPayload, validateFeed, incPayloads, incRejected, audit, slog } from "@/lib/diagnostics";
 import { saveSignal, saveAlert, saveMarket, saveTrade, getAlertState, setAlertState, getRiskConfig, getOpenTrades, getAccount, addPendingInstruction, incDiagCounter, saveAuditEntry } from "@/lib/store";
+import { env } from "@/lib/config/env";
 import type { MT5MarketPayload, MacroData } from "@/lib/types";
 
-const MT5K = () => process.env.MT5_BRIDGE_API_KEY || "";
-const TGT = () => process.env.TELEGRAM_BOT_TOKEN || "";
-const TGC = () => process.env.TELEGRAM_CHAT_ID || "";
-const MAX_AGE = () => parseInt(process.env.MT5_PAYLOAD_MAX_AGE_SEC || "90");
+/**
+ * Timing-safe string comparison to prevent timing attacks on API key validation.
+ * Returns true if strings are equal, false otherwise.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    // Still do a comparison to maintain constant time behavior
+    crypto.timingSafeEqual(Buffer.from(a), Buffer.from(a));
+    return false;
+  }
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 function auth(req: NextRequest): boolean {
-  const k = req.headers.get("X-MT5-Key") || req.headers.get("x-mt5-key") || "";
-  return MT5K() ? k === MT5K() : true;
+  const expectedKey = env.mt5ApiKey;
+  // If no API key configured, allow all requests (development mode)
+  if (!expectedKey) {
+    return true;
+  }
+  const providedKey = req.headers.get("X-MT5-Key") || req.headers.get("x-mt5-key") || "";
+  return timingSafeEqual(providedKey, expectedKey);
 }
 function fresh(ts: string): boolean {
-  try { return Math.abs(Date.now() - new Date(ts).getTime()) / 1000 <= MAX_AGE(); } catch { return false; }
+  try { return Math.abs(Date.now() - new Date(ts).getTime()) / 1000 <= env.mt5PayloadMaxAge; } catch { return false; }
 }
 function normSym(s: string): string {
   let r = s.toUpperCase().trim();
@@ -88,9 +103,8 @@ export async function POST(req: NextRequest) {
 
     if (alertDec.fire) {
       sig.alert_fired = true; sig.alert_reason = alertDec.reason;
-      const t = TGT(), c = TGC();
-      if (t && c) {
-        const r = await sendTelegram(t, c, formatAlert(sig));
+      if (env.hasTelegram) {
+        const r = await sendTelegram(env.telegramBotToken, env.telegramChatId, formatAlert(sig));
         tgSent = r.ok;
         if (!r.ok) { await incDiagCounter("notif_fail"); slog("ERROR", "telegram", "Send failed", { error: r.error }); }
       }
@@ -103,7 +117,7 @@ export async function POST(req: NextRequest) {
 
     // --- Trade Decision Engine ---
     const riskCfg = (await getRiskConfig()) || DEFAULT_RISK_CONFIG;
-    riskCfg.mode = (process.env.TRADE_MODE as any) || riskCfg.mode || "paper";
+    riskCfg.mode = env.tradeMode || riskCfg.mode || "paper";
 
     const acct = await getAccount(p.account_id || "ox_main");
     const openTrades = await getOpenTrades();
@@ -126,8 +140,8 @@ export async function POST(req: NextRequest) {
           const a = audit("paper_trade", "system", `${tradeResult.direction} ${tradeResult.volume} @ ${tradeResult.entry_price}`, { order_id: tradeResult.order_id });
           await saveAuditEntry(a);
           // Alert on trade
-          if (TGT() && TGC()) {
-            await sendTelegram(TGT(), TGC(), `💰 *PAPER TRADE*\n${tradeResult.direction.toUpperCase()} ${tradeResult.volume} ${sym}\nEntry: ${tradeResult.entry_price}\nSL: ${tradeResult.sl} | TP: ${tradeResult.tp}\nScore: ${sig.master_score.toFixed(1)} | ${sig.state}`);
+          if (env.hasTelegram) {
+            await sendTelegram(env.telegramBotToken, env.telegramChatId, `💰 *PAPER TRADE*\n${tradeResult.direction.toUpperCase()} ${tradeResult.volume} ${sym}\nEntry: ${tradeResult.entry_price}\nSL: ${tradeResult.sl} | TP: ${tradeResult.tp}\nScore: ${sig.master_score.toFixed(1)} | ${sig.state}`);
           }
         }
       } else if (tradeDec.decision === "live_trade") {

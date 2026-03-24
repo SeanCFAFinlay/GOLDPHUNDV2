@@ -2,10 +2,11 @@
 // PHUND.CA — Supabase Persistence Layer (Complete)
 // ============================================================
 
-import type { SignalOutput, AlertRecord, MT5AccountPayload, TradeRecord, RiskConfig, AuditEntry } from "./types";
+import type { SignalOutput, AlertRecord, MT5AccountPayload, TradeRecord, RiskConfig, AuditEntry, TradeInstruction, MarketCacheEntry, AlertEngineState, DiagCounters } from "./types";
+import { env } from "./config/env";
 
-const URL = () => process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
-const KEY = () => process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const URL = () => env.supabaseUrl;
+const KEY = () => env.supabaseKey;
 
 async function sb(table: string, method: "GET"|"POST"|"PATCH"|"DELETE", q = "", body?: any) {
   const u = URL(), k = KEY();
@@ -64,24 +65,38 @@ export async function saveAccount(aid: string, d: MT5AccountPayload) { await set
 export async function getAccount(aid: string): Promise<MT5AccountPayload|null> { return getState(`acc:${aid}`); }
 
 // --- Market cache ---
-export async function saveMarket(sym: string, d: any) { await setState(`mkt:${sym}`, d); }
-export async function getMarket(sym: string) { return getState(`mkt:${sym}`); }
+export async function saveMarket(sym: string, d: MarketCacheEntry) { await setState(`mkt:${sym}`, d); }
+export async function getMarket(sym: string): Promise<MarketCacheEntry | null> { return getState<MarketCacheEntry>(`mkt:${sym}`); }
 
 // --- Alert engine state ---
-export async function getAlertState(): Promise<{prev_state:string|null;prev_score:number;last_alert_time:number}> {
-  return (await getState<any>("alert_state")) || { prev_state: null, prev_score: 0, last_alert_time: 0 };
+export async function getAlertState(): Promise<AlertEngineState> {
+  return (await getState<AlertEngineState>("alert_state")) || { prev_state: null, prev_score: 0, last_alert_time: 0 };
 }
-export async function setAlertState(s: any) { await setState("alert_state", s); }
+export async function setAlertState(s: AlertEngineState) { await setState("alert_state", s); }
 
 // --- Risk config ---
 export async function getRiskConfig(): Promise<RiskConfig|null> { return getState<RiskConfig>("risk_config"); }
 export async function setRiskConfig(c: RiskConfig) { await setState("risk_config", c); }
 
 // --- Instructions queue ---
-export async function getPendingInstructions(): Promise<any[]> { return (await getState<any[]>("pending_inst")) || []; }
-export async function setPendingInstructions(i: any[]) { await setState("pending_inst", i); }
-export async function popPendingInstructions(): Promise<any[]> { const c = await getPendingInstructions(); await setPendingInstructions([]); return c; }
-export async function addPendingInstruction(i: any) { const c = await getPendingInstructions(); c.push(i); await setPendingInstructions(c); }
+export async function getPendingInstructions(): Promise<TradeInstruction[]> {
+  return (await getState<TradeInstruction[]>("pending_inst")) || [];
+}
+export async function setPendingInstructions(instructions: TradeInstruction[]) {
+  await setState("pending_inst", instructions);
+}
+export async function popPendingInstructions(): Promise<TradeInstruction[]> {
+  const instructions = await getPendingInstructions();
+  await setPendingInstructions([]);
+  return instructions;
+}
+export async function addPendingInstruction(instruction: TradeInstruction) {
+  // Note: This has a potential race condition when multiple requests add instructions simultaneously.
+  // For production use with high concurrency, consider using a dedicated Supabase table with atomic inserts.
+  const current = await getPendingInstructions();
+  current.push(instruction);
+  await setPendingInstructions(current);
+}
 
 // --- Audit ---
 export async function saveAuditEntry(e: AuditEntry) { await sb("phund_audit", "POST", "", { action: e.action, data: e }); }
@@ -91,9 +106,11 @@ export async function getRecentAudit(limit = 50): Promise<AuditEntry[]> {
 }
 
 // --- Diagnostics counters ---
-export async function getDiagCounters() { return (await getState<any>("diag_counters")) || { total: 0, rejected: 0, mismatches: 0, exec_fail: 0, notif_fail: 0 }; }
-export async function incDiagCounter(field: string) {
-  const c = await getDiagCounters();
-  c[field] = (c[field] || 0) + 1;
-  await setState("diag_counters", c);
+export async function getDiagCounters(): Promise<DiagCounters> {
+  return (await getState<DiagCounters>("diag_counters")) || { total: 0, rejected: 0, mismatches: 0, exec_fail: 0, notif_fail: 0 };
+}
+export async function incDiagCounter(field: keyof DiagCounters) {
+  const counters = await getDiagCounters();
+  counters[field] = (counters[field] || 0) + 1;
+  await setState("diag_counters", counters);
 }

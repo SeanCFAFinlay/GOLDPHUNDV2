@@ -3,81 +3,41 @@
 // 5 factors, fully independent from PHUND signal engine
 // ============================================================
 import type { Bar } from "./types";
+import {
+  clamp, tanh100,
+  ema, atr, bollingerBands, keltnerChannels,
+  stochastic, williamsR, cci, ichimokuCloud, supertrend as supertrendCalc
+} from "./math/indicators";
+import { SPECTRE_WEIGHTS } from "./config/weights";
 
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-const tanh100 = (v: number, s = 1) => Math.tanh(v / s) * 100;
-
-function ema(d: number[], p: number): number[] {
-  if (!d.length) return [];
-  const k = 2 / (p + 1), r = [d[0]];
-  for (let i = 1; i < d.length; i++) r.push(d[i] * k + r[i - 1] * (1 - k));
-  return r;
-}
-
-function atrC(h: number[], l: number[], c: number[], p = 14): number {
-  if (h.length < 2) return 1;
-  const tr: number[] = [];
-  for (let i = 1; i < h.length; i++) tr.push(Math.max(h[i] - l[i], Math.abs(h[i] - c[i - 1]), Math.abs(l[i] - c[i - 1])));
-  if (tr.length < p) return tr[tr.length - 1] || 1;
-  let v = tr.slice(0, p).reduce((a, b) => a + b, 0) / p;
-  for (let i = p; i < tr.length; i++) v = (v * (p - 1) + tr[i]) / p;
-  return Math.max(v, 0.001);
-}
+// --- Local aliases for backward compatibility ---
+const atrC = atr;
 
 function bbands(c: number[], p = 20, mult = 2): { u: number; l: number; mid: number } {
-  if (c.length < p) { const x = c[c.length - 1] || 0; return { u: x + 5, l: x - 5, mid: x }; }
-  const s = c.slice(-p), mn = s.reduce((a, b) => a + b, 0) / p;
-  const std = Math.sqrt(s.reduce((a, b) => a + (b - mn) ** 2, 0) / p);
-  return { u: mn + mult * std, l: mn - mult * std, mid: mn };
+  const bb = bollingerBands(c, p, mult);
+  return { u: bb.upper, l: bb.lower, mid: bb.middle };
 }
 
 function keltner(h: number[], l: number[], c: number[], p = 20, mult = 1.5): { u: number; l: number; mid: number } {
-  const e = ema(c, p), mid = e[e.length - 1], a = atrC(h, l, c, p);
-  return { u: mid + mult * a, l: mid - mult * a, mid };
-}
-
-function stochastic(h: number[], l: number[], c: number[], kp = 14, dp = 3): { k: number; d: number } {
-  if (c.length < kp) return { k: 50, d: 50 };
-  const kArr: number[] = [];
-  for (let i = kp - 1; i < c.length; i++) {
-    const hi = Math.max(...h.slice(i - kp + 1, i + 1)), lo = Math.min(...l.slice(i - kp + 1, i + 1));
-    kArr.push(hi === lo ? 50 : ((c[i] - lo) / (hi - lo)) * 100);
-  }
-  const k = kArr[kArr.length - 1], dSlice = kArr.slice(-dp);
-  return { k, d: dSlice.reduce((a, b) => a + b, 0) / dSlice.length };
-}
-
-function williamsR(h: number[], l: number[], c: number[], p = 14): number {
-  if (c.length < p) return -50;
-  const hi = Math.max(...h.slice(-p)), lo = Math.min(...l.slice(-p));
-  return hi === lo ? -50 : ((hi - c[c.length - 1]) / (hi - lo)) * -100;
-}
-
-function cci(h: number[], l: number[], c: number[], p = 20): number {
-  if (c.length < p) return 0;
-  const tp = h.map((hi, i) => (hi + l[i] + c[i]) / 3), slice = tp.slice(-p);
-  const mean = slice.reduce((a, b) => a + b, 0) / p;
-  const md = slice.reduce((a, b) => a + Math.abs(b - mean), 0) / p;
-  return md > 0 ? (tp[tp.length - 1] - mean) / (0.015 * md) : 0;
+  const kc = keltnerChannels(h, l, c, p, mult);
+  return { u: kc.upper, l: kc.lower, mid: kc.middle };
 }
 
 function ichimoku(h: number[], l: number[], c: number[]) {
-  const hMax = (n: number) => Math.max(...h.slice(-Math.min(n, h.length)));
-  const lMin = (n: number) => Math.min(...l.slice(-Math.min(n, l.length)));
-  const tenkan = (hMax(9) + lMin(9)) / 2;
-  const kijun = (hMax(26) + lMin(26)) / 2;
-  const senkouA = (tenkan + kijun) / 2;
-  const senkouB = (hMax(52) + lMin(52)) / 2;
-  const price26ago = c.length >= 27 ? c[c.length - 27] : c[0];
-  return { tenkan, kijun, senkouA, senkouB, price26ago, price: c[c.length - 1] };
+  const ichi = ichimokuCloud(h, l, c);
+  return {
+    tenkan: ichi.tenkan,
+    kijun: ichi.kijun,
+    senkouA: ichi.senkouA,
+    senkouB: ichi.senkouB,
+    price26ago: ichi.price26ago,
+    price: ichi.price,
+  };
 }
 
 function supertrend(h: number[], l: number[], c: number[], p = 10, mult = 3): number {
-  if (c.length < p + 1) return 0;
-  const a = atrC(h, l, c, p);
-  const hl2 = (h[h.length - 1] + l[l.length - 1]) / 2;
-  const lower = hl2 - mult * a;
-  return c[c.length - 1] > lower ? 1 : -1;
+  const result = supertrendCalc(h, l, c, p, mult);
+  return result.direction;
 }
 
 function swingStructure(h: number[], l: number[], n = 40) {

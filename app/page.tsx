@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 
 interface FR { score: number; components: Record<string, number>; metadata: Record<string, any>; }
 interface Pos { ticket: number; symbol: string; direction: string; volume: number; open_price: number; current_price: number; sl?: number; tp?: number; profit: number; swap: number; open_time: string; }
@@ -33,27 +33,27 @@ const ft = (iso: string) => { try { return new Date(iso).toLocaleTimeString([], 
 const fp = (n: number) => n >= 0 ? `+$${n.toFixed(2)}` : `-$${Math.abs(n).toFixed(2)}`;
 
 function Bdg({ t, c, sz = "sm" }: { t: string; c: string; sz?: string }) {
-  const fs = sz === "lg" ? 13 : sz === "md" ? 11 : 10, px = sz === "lg" ? 14 : sz === "md" ? 10 : 7, py = sz === "lg" ? 6 : sz === "md" ? 4 : 3;
+  const fs = sz === "lg" ? 15 : sz === "md" ? 13 : 12, px = sz === "lg" ? 16 : sz === "md" ? 12 : 9, py = sz === "lg" ? 7 : sz === "md" ? 5 : 4;
   return <span style={{ display: "inline-block", fontFamily: F.s, fontSize: fs, fontWeight: 700, padding: `${py}px ${px}px`, borderRadius: 4, background: `${c}1a`, color: c, border: `1px solid ${c}33`, lineHeight: 1, whiteSpace: "nowrap" }}>{t}</span>;
 }
 function FBar({ label, score, min = -100, max = 100 }: { label: string; score: number; min?: number; max?: number }) {
   const rng = max - min, pct = ((score - min) / rng) * 100, mid = ((0 - min) / rng) * 100;
   const cl = score > 15 ? C.bu : score < -15 ? C.be : C.nu;
-  return (<div style={{ marginBottom: 7 }}>
-    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-      <span style={{ fontFamily: F.s, fontSize: 11, color: C.t2 }}>{label}</span>
-      <span style={{ fontFamily: F.m, fontSize: 11, fontWeight: 600, color: cl }}>{score > 0 ? "+" : ""}{score.toFixed(1)}</span>
+  return (<div style={{ marginBottom: 10 }}>
+    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+      <span style={{ fontFamily: F.s, fontSize: 13, color: C.t2 }}>{label}</span>
+      <span style={{ fontFamily: F.m, fontSize: 13, fontWeight: 600, color: cl }}>{score > 0 ? "+" : ""}{score.toFixed(1)}</span>
     </div>
-    <div style={{ height: 5, background: C.bd, borderRadius: 3, position: "relative", overflow: "hidden" }}>
+    <div style={{ height: 6, background: C.bd, borderRadius: 3, position: "relative", overflow: "hidden" }}>
       {min < 0 && <div style={{ position: "absolute", left: `${mid}%`, top: 0, bottom: 0, width: 1, background: "#243045", zIndex: 1 }} />}
       <div style={{ position: "absolute", left: score >= 0 ? `${mid}%` : `${pct}%`, width: `${Math.abs(pct - mid)}%`, top: 0, bottom: 0, borderRadius: 3, background: `linear-gradient(90deg, ${cl}66, ${cl})`, transition: "all 0.5s" }} />
     </div>
   </div>);
 }
 function DR({ l, v, c, m = true }: { l: string; v: string; c?: string; m?: boolean }) {
-  return (<div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${C.bd}33` }}>
-    <span style={{ fontFamily: F.s, fontSize: 11, color: C.t3 }}>{l}</span>
-    <span style={{ fontFamily: m ? F.m : F.s, fontSize: 11, fontWeight: 600, color: c || C.tx }}>{v}</span>
+  return (<div style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: `1px solid ${C.bd}33` }}>
+    <span style={{ fontFamily: F.s, fontSize: 13, color: C.t3 }}>{l}</span>
+    <span style={{ fontFamily: m ? F.m : F.s, fontSize: 13, fontWeight: 600, color: c || C.tx }}>{v}</span>
   </div>);
 }
 function Arc({ p, sz = 120 }: { p: number; sz?: number }) {
@@ -68,12 +68,12 @@ function Arc({ p, sz = 120 }: { p: number; sz?: number }) {
 }
 function Dot({ ok }: { ok: boolean }) { return <div style={{ width: 8, height: 8, borderRadius: "50%", background: ok ? C.bu : C.be, boxShadow: `0 0 6px ${ok ? C.bu : C.be}66` }} />; }
 function Card({ title, children, span }: { title: string; children: React.ReactNode; span?: number }) {
-  return (<div style={{ background: C.cd, borderRadius: 8, border: `1px solid ${C.bd}`, padding: "14px 16px", gridColumn: span ? `span ${span}` : undefined, minWidth: 0 }}>
-    <div style={{ fontFamily: F.s, fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t3, marginBottom: 10 }}>{title}</div>
+  return (<div style={{ background: C.cd, borderRadius: 8, border: `1px solid ${C.bd}`, padding: "16px 18px", gridColumn: span ? `span ${span}` : undefined, minWidth: 0 }}>
+    <div style={{ fontFamily: F.s, fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t2, marginBottom: 12 }}>{title}</div>
     {children}
   </div>);
 }
-function NoData() { return <div style={{ fontFamily: F.m, fontSize: 11, color: C.t3, textAlign: "center", padding: 20 }}>Awaiting MT5 data...</div>; }
+function NoData() { return <div style={{ fontFamily: F.m, fontSize: 13, color: C.t3, textAlign: "center", padding: 24 }}>Awaiting MT5 data...</div>; }
 function SChart({ hist }: { hist: Sig[] }) {
   if (hist.length < 2) return null;
   const scores = hist.slice(-40).map(s => s.master_score);
@@ -100,10 +100,10 @@ function TfRow({ tf, bias }: { tf: string; bias: number }) {
   const label = isBull ? (strength > 0.6 ? "STRONG BULL" : "BULL") : isBear ? (strength > 0.6 ? "STRONG BEAR" : "BEAR") : "NEUTRAL";
   const arrow = isBull ? "↑" : isBear ? "↓" : "→";
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", borderBottom: `1px solid ${C.bd}33` }}>
-      <span style={{ fontFamily: F.m, fontSize: 11, color: C.t2, width: 32, fontWeight: 700 }}>{tf}</span>
-      <span style={{ fontFamily: F.m, fontSize: 18, color: cl, lineHeight: 1 }}>{arrow}</span>
-      <div style={{ flex: 1, height: 5, background: C.bd, borderRadius: 3, overflow: "hidden", position: "relative" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.bd}33` }}>
+      <span style={{ fontFamily: F.m, fontSize: 13, color: C.t2, width: 36, fontWeight: 700 }}>{tf}</span>
+      <span style={{ fontFamily: F.m, fontSize: 20, color: cl, lineHeight: 1 }}>{arrow}</span>
+      <div style={{ flex: 1, height: 6, background: C.bd, borderRadius: 3, overflow: "hidden", position: "relative" }}>
         <div style={{ position: "absolute", left: "50%", top: 0, bottom: 0, width: 1, background: "#2a3a55" }} />
         {isBull && <div style={{ position: "absolute", left: "50%", width: `${strength * 50}%`, height: "100%", background: `linear-gradient(90deg, ${cl}66, ${cl})`, borderRadius: 2, transition: "all 0.6s" }} />}
         {isBear && <div style={{ position: "absolute", right: "50%", width: `${strength * 50}%`, height: "100%", background: `linear-gradient(270deg, ${cl}66, ${cl})`, borderRadius: 2, transition: "all 0.6s" }} />}
@@ -208,84 +208,84 @@ function TradePanel({ signal, account, onTrade }: { signal: Sig | null; account:
   return (
     <div>
       {/* Price display */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div style={{ textAlign: "center", flex: 1 }}>
-          <div style={{ fontFamily: F.m, fontSize: 9, color: C.t3, marginBottom: 2 }}>BID</div>
-          <div style={{ fontFamily: F.m, fontSize: 18, fontWeight: 800, color: C.bu }}>{signal?.bid?.toFixed(2) || "—"}</div>
+          <div style={{ fontFamily: F.m, fontSize: 11, color: C.t3, marginBottom: 3 }}>BID</div>
+          <div style={{ fontFamily: F.m, fontSize: 22, fontWeight: 800, color: C.bu }}>{signal?.bid?.toFixed(2) || "—"}</div>
         </div>
-        <div style={{ width: 1, height: 36, background: C.bd }} />
+        <div style={{ width: 1, height: 40, background: C.bd }} />
         <div style={{ textAlign: "center", flex: 1 }}>
-          <div style={{ fontFamily: F.m, fontSize: 9, color: C.t3, marginBottom: 2 }}>ASK</div>
-          <div style={{ fontFamily: F.m, fontSize: 18, fontWeight: 800, color: C.be }}>{signal?.ask?.toFixed(2) || "—"}</div>
+          <div style={{ fontFamily: F.m, fontSize: 11, color: C.t3, marginBottom: 3 }}>ASK</div>
+          <div style={{ fontFamily: F.m, fontSize: 22, fontWeight: 800, color: C.be }}>{signal?.ask?.toFixed(2) || "—"}</div>
         </div>
-        <div style={{ width: 1, height: 36, background: C.bd }} />
+        <div style={{ width: 1, height: 40, background: C.bd }} />
         <div style={{ textAlign: "center", flex: 1 }}>
-          <div style={{ fontFamily: F.m, fontSize: 9, color: C.t3, marginBottom: 2 }}>SPREAD</div>
-          <div style={{ fontFamily: F.m, fontSize: 14, fontWeight: 700, color: (signal?.spread || 0) > 30 ? C.wa : C.t2 }}>{signal?.spread?.toFixed(1) || "—"}</div>
+          <div style={{ fontFamily: F.m, fontSize: 11, color: C.t3, marginBottom: 3 }}>SPREAD</div>
+          <div style={{ fontFamily: F.m, fontSize: 16, fontWeight: 700, color: (signal?.spread || 0) > 30 ? C.wa : C.t2 }}>{signal?.spread?.toFixed(1) || "—"}</div>
         </div>
       </div>
 
       {/* Signal recommendation */}
       {signal && dir && (
-        <div style={{ padding: "5px 8px", background: `${stC(signal.state)}0d`, border: `1px solid ${stC(signal.state)}22`, borderRadius: 4, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontFamily: F.s, fontSize: 10, color: stC(signal.state) }}>Signal: {sl(signal.state)}</span>
-          <span style={{ fontFamily: F.m, fontSize: 10, color: C.t3 }}>Score: {signal.master_score > 0 ? "+" : ""}{signal.master_score.toFixed(1)}</span>
+        <div style={{ padding: "7px 10px", background: `${stC(signal.state)}0d`, border: `1px solid ${stC(signal.state)}22`, borderRadius: 4, marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontFamily: F.s, fontSize: 12, color: stC(signal.state) }}>Signal: {sl(signal.state)}</span>
+          <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3 }}>Score: {signal.master_score > 0 ? "+" : ""}{signal.master_score.toFixed(1)}</span>
         </div>
       )}
       {signal?.no_trade && (
-        <div style={{ padding: "5px 8px", background: `${C.wa}0d`, border: `1px solid ${C.wa}22`, borderRadius: 4, marginBottom: 8 }}>
-          <span style={{ fontFamily: F.s, fontSize: 10, color: C.wa }}>⊘ No Trade — {signal.no_trade_reason}</span>
+        <div style={{ padding: "7px 10px", background: `${C.wa}0d`, border: `1px solid ${C.wa}22`, borderRadius: 4, marginBottom: 10 }}>
+          <span style={{ fontFamily: F.s, fontSize: 12, color: C.wa }}>⊘ No Trade — {signal.no_trade_reason}</span>
         </div>
       )}
 
       {/* Lot size */}
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ fontFamily: F.s, fontSize: 10, color: C.t3, marginBottom: 4 }}>Lot Size</div>
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ fontFamily: F.s, fontSize: 12, color: C.t3, marginBottom: 5 }}>Lot Size</div>
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
           {LOT_SIZES.map(l => (
             <button key={l} onClick={() => { setLot(l); setCustomLot(""); }}
-              style={{ fontFamily: F.m, fontSize: 10, padding: "4px 8px", borderRadius: 4, border: `1px solid ${lot === l && !customLot ? C.ac : C.bd}`, background: lot === l && !customLot ? `${C.ac}1a` : "transparent", color: lot === l && !customLot ? C.ac : C.t2, cursor: "pointer" }}>
+              style={{ fontFamily: F.m, fontSize: 12, padding: "6px 10px", borderRadius: 4, border: `1px solid ${lot === l && !customLot ? C.ac : C.bd}`, background: lot === l && !customLot ? `${C.ac}1a` : "transparent", color: lot === l && !customLot ? C.ac : C.t2, cursor: "pointer" }}>
               {l}
             </button>
           ))}
           <input value={customLot} onChange={e => setCustomLot(e.target.value)} placeholder="custom"
-            style={{ fontFamily: F.m, fontSize: 10, width: 56, padding: "4px 6px", borderRadius: 4, border: `1px solid ${customLot ? C.ac : C.bd}`, background: C.bg, color: C.tx, outline: "none" }} />
+            style={{ fontFamily: F.m, fontSize: 12, width: 64, padding: "6px 8px", borderRadius: 4, border: `1px solid ${customLot ? C.ac : C.bd}`, background: C.bg, color: C.tx, outline: "none" }} />
         </div>
       </div>
 
       {/* SL/TP */}
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-          <span style={{ fontFamily: F.s, fontSize: 10, color: C.t3 }}>SL / TP</span>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 5 }}>
+          <span style={{ fontFamily: F.s, fontSize: 12, color: C.t3 }}>SL / TP</span>
           <button onClick={() => setUseSig(!useSig)}
-            style={{ fontFamily: F.s, fontSize: 9, padding: "2px 6px", borderRadius: 3, border: `1px solid ${useSig ? C.bu : C.bd}`, background: useSig ? `${C.bu}1a` : "transparent", color: useSig ? C.bu : C.t3, cursor: "pointer" }}>
+            style={{ fontFamily: F.s, fontSize: 11, padding: "3px 8px", borderRadius: 3, border: `1px solid ${useSig ? C.bu : C.bd}`, background: useSig ? `${C.bu}1a` : "transparent", color: useSig ? C.bu : C.t3, cursor: "pointer" }}>
             {useSig ? "Auto (signal)" : "Manual"}
           </button>
         </div>
         {useSig ? (
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: F.m, fontSize: 10, color: C.be }}>SL: {sigSl?.toFixed(2) || "—"} <span style={{ color: C.t3 }}>({slDist.toFixed(2)} pts)</span></span>
-            <span style={{ fontFamily: F.m, fontSize: 10, color: C.bu }}>TP: {sigTp?.toFixed(2) || "—"} <span style={{ color: C.t3 }}>(4:1)</span></span>
-            {activeLot > 0 && slDist > 0 && <span style={{ fontFamily: F.m, fontSize: 10, color: C.t3 }}>Risk: ~${(activeLot * slDist * 100).toFixed(0)} → Reward: ~${(activeLot * slDist * 400).toFixed(0)}</span>}
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: F.m, fontSize: 12, color: C.be }}>SL: {sigSl?.toFixed(2) || "—"} <span style={{ color: C.t3 }}>({slDist.toFixed(2)} pts)</span></span>
+            <span style={{ fontFamily: F.m, fontSize: 12, color: C.bu }}>TP: {sigTp?.toFixed(2) || "—"} <span style={{ color: C.t3 }}>(4:1)</span></span>
+            {activeLot > 0 && slDist > 0 && <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3 }}>Risk: ~${(activeLot * slDist * 100).toFixed(0)} → Reward: ~${(activeLot * slDist * 400).toFixed(0)}</span>}
           </div>
         ) : (
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 8 }}>
             <input value={manSl} onChange={e => setManSl(e.target.value)} placeholder="SL price"
-              style={{ fontFamily: F.m, fontSize: 10, width: 80, padding: "4px 6px", borderRadius: 4, border: `1px solid ${C.bd}`, background: C.bg, color: C.tx, outline: "none" }} />
+              style={{ fontFamily: F.m, fontSize: 12, width: 90, padding: "6px 8px", borderRadius: 4, border: `1px solid ${C.bd}`, background: C.bg, color: C.tx, outline: "none" }} />
             <input value={manTp} onChange={e => setManTp(e.target.value)} placeholder="TP price"
-              style={{ fontFamily: F.m, fontSize: 10, width: 80, padding: "4px 6px", borderRadius: 4, border: `1px solid ${C.bd}`, background: C.bg, color: C.tx, outline: "none" }} />
+              style={{ fontFamily: F.m, fontSize: 12, width: 90, padding: "6px 8px", borderRadius: 4, border: `1px solid ${C.bd}`, background: C.bg, color: C.tx, outline: "none" }} />
           </div>
         )}
       </div>
 
       {/* Buy / Sell buttons */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
         <button onClick={() => exec("buy")} disabled={loading}
-          style={{ padding: "12px 0", borderRadius: 6, border: "none", background: loading ? `${C.bu}44` : `linear-gradient(135deg, #0fd49288, #0fd492)`, color: "#080c14", fontFamily: F.m, fontWeight: 800, fontSize: 14, cursor: loading ? "not-allowed" : "pointer", letterSpacing: "0.05em" }}>
+          style={{ padding: "14px 0", borderRadius: 6, border: "none", background: loading ? `${C.bu}44` : `linear-gradient(135deg, #0fd49288, #0fd492)`, color: "#080c14", fontFamily: F.m, fontWeight: 800, fontSize: 16, cursor: loading ? "not-allowed" : "pointer", letterSpacing: "0.05em" }}>
           ▲ BUY
         </button>
         <button onClick={() => exec("sell")} disabled={loading}
-          style={{ padding: "12px 0", borderRadius: 6, border: "none", background: loading ? `${C.be}44` : `linear-gradient(135deg, #f0484888, #f04848)`, color: "#fff", fontFamily: F.m, fontWeight: 800, fontSize: 14, cursor: loading ? "not-allowed" : "pointer", letterSpacing: "0.05em" }}>
+          style={{ padding: "14px 0", borderRadius: 6, border: "none", background: loading ? `${C.be}44` : `linear-gradient(135deg, #f0484888, #f04848)`, color: "#fff", fontFamily: F.m, fontWeight: 800, fontSize: 16, cursor: loading ? "not-allowed" : "pointer", letterSpacing: "0.05em" }}>
           ▼ SELL
         </button>
       </div>
@@ -293,32 +293,32 @@ function TradePanel({ signal, account, onTrade }: { signal: Sig | null; account:
       {/* Close All */}
       {(account?.positions?.length || 0) > 0 && (
         <button onClick={closeAll} disabled={loading}
-          style={{ width: "100%", padding: "7px 0", borderRadius: 5, border: `1px solid ${C.wa}44`, background: `${C.wa}0d`, color: C.wa, fontFamily: F.m, fontWeight: 700, fontSize: 11, cursor: loading ? "not-allowed" : "pointer", marginBottom: 6 }}>
+          style={{ width: "100%", padding: "9px 0", borderRadius: 5, border: `1px solid ${C.wa}44`, background: `${C.wa}0d`, color: C.wa, fontFamily: F.m, fontWeight: 700, fontSize: 13, cursor: loading ? "not-allowed" : "pointer", marginBottom: 8 }}>
           ✕ CLOSE ALL POSITIONS
         </button>
       )}
 
       {/* Account summary */}
       {account && (
-        <div style={{ borderTop: `1px solid ${C.bd}`, paddingTop: 8, marginTop: 4 }}>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span style={{ fontFamily: F.m, fontSize: 10, color: C.t3 }}>Balance</span>
-            <span style={{ fontFamily: F.m, fontSize: 10, color: C.tx }}>${account.balance?.toFixed(2)}</span>
+        <div style={{ borderTop: `1px solid ${C.bd}`, paddingTop: 10, marginTop: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+            <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3 }}>Balance</span>
+            <span style={{ fontFamily: F.m, fontSize: 12, color: C.tx }}>${account.balance?.toFixed(2)}</span>
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span style={{ fontFamily: F.m, fontSize: 10, color: C.t3 }}>Equity</span>
-            <span style={{ fontFamily: F.m, fontSize: 10, color: account.profit >= 0 ? C.bu : C.be }}>${account.equity?.toFixed(2)}</span>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+            <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3 }}>Equity</span>
+            <span style={{ fontFamily: F.m, fontSize: 12, color: account.profit >= 0 ? C.bu : C.be }}>${account.equity?.toFixed(2)}</span>
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
-            <span style={{ fontFamily: F.m, fontSize: 10, color: C.t3 }}>Open P&L</span>
-            <span style={{ fontFamily: F.m, fontSize: 11, fontWeight: 700, color: account.profit >= 0 ? C.bu : C.be }}>{fp(account.profit)}</span>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+            <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3 }}>Open P&L</span>
+            <span style={{ fontFamily: F.m, fontSize: 13, fontWeight: 700, color: account.profit >= 0 ? C.bu : C.be }}>{fp(account.profit)}</span>
           </div>
         </div>
       )}
 
       {status && (
-        <div style={{ marginTop: 6, padding: "5px 8px", borderRadius: 4, background: status.ok ? `${C.bu}0d` : `${C.be}0d`, border: `1px solid ${status.ok ? C.bu : C.be}33` }}>
-          <span style={{ fontFamily: F.m, fontSize: 10, color: status.ok ? C.bu : C.be }}>{status.msg}</span>
+        <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 4, background: status.ok ? `${C.bu}0d` : `${C.be}0d`, border: `1px solid ${status.ok ? C.bu : C.be}33` }}>
+          <span style={{ fontFamily: F.m, fontSize: 12, color: status.ok ? C.bu : C.be }}>{status.msg}</span>
         </div>
       )}
     </div>
@@ -338,33 +338,33 @@ function PositionsPanel({ positions, onClose }: { positions: Pos[]; onClose: (ti
     setClosing(null);
   };
 
-  if (!positions?.length) return <div style={{ fontFamily: F.m, fontSize: 11, color: C.t3, textAlign: "center", padding: 20 }}>No open positions</div>;
+  if (!positions?.length) return <div style={{ fontFamily: F.m, fontSize: 13, color: C.t3, textAlign: "center", padding: 24 }}>No open positions</div>;
 
   return (
     <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: F.m, fontSize: 10 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: F.m, fontSize: 12 }}>
         <thead><tr style={{ borderBottom: `1px solid ${C.bd}` }}>
           {["Ticket", "Dir", "Vol", "Open", "Current", "SL", "TP", "P&L", ""].map(h => (
-            <th key={h} style={{ padding: "4px 5px", textAlign: "left", color: C.t3, fontWeight: 500, fontSize: 9, whiteSpace: "nowrap" }}>{h}</th>
+            <th key={h} style={{ padding: "6px 6px", textAlign: "left", color: C.t3, fontWeight: 500, fontSize: 11, whiteSpace: "nowrap" }}>{h}</th>
           ))}
         </tr></thead>
         <tbody>
           {positions.map(p => (
             <tr key={p.ticket} style={{ borderBottom: `1px solid ${C.bd}15` }}>
-              <td style={{ padding: "4px 5px", color: C.t2 }}>{p.ticket}</td>
-              <td style={{ padding: "4px 5px" }}><Bdg t={p.direction.toUpperCase()} c={p.direction === "buy" ? C.bu : C.be} /></td>
-              <td style={{ padding: "4px 5px", color: C.tx }}>{p.volume}</td>
-              <td style={{ padding: "4px 5px", color: C.t2 }}>{p.open_price?.toFixed(2)}</td>
-              <td style={{ padding: "4px 5px", color: C.tx }}>{p.current_price?.toFixed(2)}</td>
-              <td style={{ padding: "4px 5px", color: C.be }}>{p.sl?.toFixed(2) || "—"}</td>
-              <td style={{ padding: "4px 5px", color: C.bu }}>{p.tp?.toFixed(2) || "—"}</td>
-              <td style={{ padding: "4px 5px", color: p.profit >= 0 ? C.bu : C.be, fontWeight: 700 }}>{fp(p.profit)}</td>
-              <td style={{ padding: "4px 5px" }}>
+              <td style={{ padding: "6px 6px", color: C.t2 }}>{p.ticket}</td>
+              <td style={{ padding: "6px 6px" }}><Bdg t={p.direction.toUpperCase()} c={p.direction === "buy" ? C.bu : C.be} /></td>
+              <td style={{ padding: "6px 6px", color: C.tx }}>{p.volume}</td>
+              <td style={{ padding: "6px 6px", color: C.t2 }}>{p.open_price?.toFixed(2)}</td>
+              <td style={{ padding: "6px 6px", color: C.tx }}>{p.current_price?.toFixed(2)}</td>
+              <td style={{ padding: "6px 6px", color: C.be }}>{p.sl?.toFixed(2) || "—"}</td>
+              <td style={{ padding: "6px 6px", color: C.bu }}>{p.tp?.toFixed(2) || "—"}</td>
+              <td style={{ padding: "6px 6px", color: p.profit >= 0 ? C.bu : C.be, fontWeight: 700 }}>{fp(p.profit)}</td>
+              <td style={{ padding: "6px 6px" }}>
                 {msgs[p.ticket] ? (
-                  <span style={{ fontSize: 9, color: msgs[p.ticket].startsWith("✓") ? C.bu : C.be }}>{msgs[p.ticket]}</span>
+                  <span style={{ fontSize: 11, color: msgs[p.ticket].startsWith("✓") ? C.bu : C.be }}>{msgs[p.ticket]}</span>
                 ) : (
                   <button onClick={() => close(p.ticket)} disabled={closing === p.ticket}
-                    style={{ fontFamily: F.m, fontSize: 9, padding: "2px 7px", borderRadius: 3, border: `1px solid ${C.be}44`, background: `${C.be}0d`, color: C.be, cursor: "pointer" }}>
+                    style={{ fontFamily: F.m, fontSize: 11, padding: "4px 10px", borderRadius: 3, border: `1px solid ${C.be}44`, background: `${C.be}0d`, color: C.be, cursor: "pointer" }}>
                     Close
                   </button>
                 )}
@@ -806,6 +806,9 @@ export default function PhundDashboard() {
   const [spectreData, setSpectreData] = useState<SpectreOutput|null>(null);
   const [goldLogicData, setGoldLogicData] = useState<GoldLogicSnapshot|null>(null);
 
+  // Track if spectre data has been fetched initially to prevent infinite loops
+  const spectreInitialFetchRef = useRef(false);
+
   const fetchState = useCallback(async () => {
     try {
       const r = await fetch("/api/dashboard/state", { cache: "no-store" });
@@ -834,12 +837,23 @@ export default function PhundDashboard() {
     return () => { clearInterval(i); clearInterval(t); };
   }, [fetchState]);
 
+  // Spectre data fetch - separate initial fetch from interval refresh
   useEffect(() => {
-    if (activeTab !== "spectre") return;
-    if (!spectreData) fetchSpectre();
+    if (activeTab !== "spectre") {
+      spectreInitialFetchRef.current = false; // Reset when leaving tab
+      return;
+    }
+
+    // Initial fetch only once per tab visit
+    if (!spectreInitialFetchRef.current) {
+      spectreInitialFetchRef.current = true;
+      fetchSpectre();
+    }
+
+    // Set up refresh interval
     const i = setInterval(fetchSpectre, 15000);
     return () => clearInterval(i);
-  }, [activeTab, fetchSpectre, spectreData]);
+  }, [activeTab, fetchSpectre]);
 
   const sendTrade = async (action: string, direction?: string, volume?: number, slP?: number, tpP?: number, ticket?: number) => {
     const r = await fetch("/api/trade/manual", {

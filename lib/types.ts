@@ -163,6 +163,36 @@ export interface IngestResponse {
 }
 
 // ============================================================
+// Store & Cache Types
+// ============================================================
+
+export interface MarketCacheEntry {
+  bid: number;
+  ask: number;
+  spread: number;
+  last_update: string;
+  source: string;
+  feed_check: FeedCheck;
+  bars_10m: Bar[];
+  bars_1h: Bar[];
+  bars_4h: Bar[];
+}
+
+export interface AlertEngineState {
+  prev_state: string | null;
+  prev_score: number;
+  last_alert_time: number;
+}
+
+export interface DiagCounters {
+  total: number;
+  rejected: number;
+  mismatches: number;
+  exec_fail: number;
+  notif_fail: number;
+}
+
+// ============================================================
 // GOLD LOGIC AI Types (V2)
 // ============================================================
 

@@ -60,3 +60,6 @@ CLAUDE_CODE_ONE_SHOT_GOLD_V2.md
 
 # Claude
 .claude/
+
+.vercel
+.env*.local

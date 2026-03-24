@@ -9,7 +9,7 @@ import type { SignalOutput, TradeDecision, TradeRecord, TradeInstruction, TradeD
 const UID = () => `PHD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,6)}`.toUpperCase();
 
 export const DEFAULT_RISK_CONFIG: RiskConfig = {
-  mode: "paper", live_enabled: false, max_risk_pct: 1.0,
+  mode: "live", live_enabled: true, max_risk_pct: 1.0,
   max_concurrent_trades: 3, max_daily_loss_pct: 3.0, max_drawdown_pct: 5.0,
   cooldown_sec: 300, max_spread_points: 40,
   allowed_sessions: ["London Session", "NY Open", "London/NY Overlap", "Late NY"],
@@ -130,7 +130,8 @@ export function evaluateTradeDecision(
   const tpDist = slDist * config.tp_rr_ratio;
   const riskAmount = account.balance * (config.max_risk_pct / 100);
   // Gold: ~$1 per pip per 0.01 lot for XAUUSD (approx)
-  const pipValue = 0.01; // per 0.01 lot per point
+  // Volume calculation: riskAmount / (stopLossPoints * pointValue)
+  // For XAUUSD: 1 pip = $1 per 0.01 lot, so slDist * 100 gives dollar risk per 0.01 lot
   let volume = slDist > 0 ? Math.round((riskAmount / (slDist * 100)) * 100) / 100 : 0.01;
   volume = Math.max(0.01, Math.min(volume, 1.0));
 

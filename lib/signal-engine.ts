@@ -4,75 +4,36 @@
 // ============================================================
 
 import type { Bar, FactorResult, SignalOutput, SignalState, RiskLevel, StructureLevels, MacroData } from "./types";
+import {
+  clamp, tanhN, sigmoid,
+  ema, rsi, macd, atr, bollingerBands, adx, vwap, roc, range
+} from "./math/indicators";
+import { SIGNAL_ENGINE_WEIGHTS as W_CFG } from "./config/weights";
 
-// --- Core Math ---
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-const tanhN = (v: number, s = 1) => Math.tanh(v / s) * 100;
-const sigm = (score: number, k = 18) => 1 / (1 + Math.exp(-score / k));
-
-function ema(d: number[], p: number): number[] {
-  if (!d.length) return [];
-  const k = 2 / (p + 1); const r = [d[0]];
-  for (let i = 1; i < d.length; i++) r.push(d[i] * k + r[i - 1] * (1 - k));
-  return r;
-}
-
-function rsiC(c: number[], p = 14): number {
-  if (c.length < p + 1) return 50;
-  let g = 0, l = 0;
-  for (let i = c.length - p; i < c.length; i++) { const d = c[i] - c[i - 1]; d > 0 ? g += d : l -= d; }
-  return l === 0 ? 100 : 100 - 100 / (1 + (g / p) / (l / p));
-}
+// --- Local aliases for compatibility ---
+const sigm = sigmoid;
+const rsiC = rsi;
+const atrC = atr;
+const rocC = roc;
+const vwapC = vwap;
 
 function macdC(c: number[]) {
+  const result = macd(c);
   const e12 = ema(c, 12), e26 = ema(c, 26);
   const line = e12.map((v, i) => v - e26[i]);
   const sig = ema(line, 9);
   return { line, signal: sig, hist: line.map((v, i) => v - sig[i]) };
 }
 
-function atrC(h: number[], l: number[], c: number[], p = 14): number {
-  if (h.length < 2) return 1;
-  const tr: number[] = [];
-  for (let i = 1; i < h.length; i++) tr.push(Math.max(h[i] - l[i], Math.abs(h[i] - c[i - 1]), Math.abs(l[i] - c[i - 1])));
-  if (tr.length < p) return tr[tr.length - 1] || 1;
-  let v = tr.slice(0, p).reduce((a, b) => a + b, 0) / p;
-  for (let i = p; i < tr.length; i++) v = (v * (p - 1) + tr[i]) / p;
-  return Math.max(v, 0.001);
-}
-
 function bbC(c: number[], p = 20, m = 2) {
-  if (c.length < p) { const x = c[c.length - 1] || 0; return { u: x + 5, l: x - 5, mid: x, w: 10 }; }
-  const s = c.slice(-p), mn = s.reduce((a, b) => a + b, 0) / s.length;
-  const std = Math.sqrt(s.reduce((a, b) => a + (b - mn) ** 2, 0) / s.length);
-  return { u: mn + m * std, l: mn - m * std, mid: mn, w: mn ? (m * std * 2) / mn * 100 : 0 };
+  const bb = bollingerBands(c, p, m);
+  return { u: bb.upper, l: bb.lower, mid: bb.middle, w: bb.width };
 }
 
 function adxC(h: number[], l: number[], c: number[], p = 14) {
-  if (h.length < p + 2) return { adx: 20, pdi: 25, mdi: 25 };
-  const pd: number[] = [], md: number[] = [], tr: number[] = [];
-  for (let i = 1; i < h.length; i++) {
-    const u = h[i] - h[i - 1], d = l[i - 1] - l[i];
-    pd.push(u > d && u > 0 ? u : 0); md.push(d > u && d > 0 ? d : 0);
-    tr.push(Math.max(h[i] - l[i], Math.abs(h[i] - c[i - 1]), Math.abs(l[i] - c[i - 1])));
-  }
-  const st = ema(tr, p), sp = ema(pd, p), sm = ema(md, p), L = st.length - 1;
-  const pi = st[L] > 0 ? (sp[L] / st[L]) * 100 : 0, mi = st[L] > 0 ? (sm[L] / st[L]) * 100 : 0;
-  return { adx: clamp(pi + mi > 0 ? Math.abs(pi - mi) / (pi + mi) * 100 : 0, 0, 100), pdi: pi, mdi: mi };
+  const result = adx(h, l, c, p);
+  return { adx: result.adx, pdi: result.plusDI, mdi: result.minusDI };
 }
-
-function vwapC(h: number[], l: number[], c: number[], v: number[]): number {
-  let cv = 0, ct = 0;
-  for (let i = 0; i < c.length; i++) { const tp = (h[i] + l[i] + c[i]) / 3; cv += v[i]; ct += tp * v[i]; }
-  return cv > 0 ? ct / cv : c[c.length - 1] || 0;
-}
-
-function rocC(c: number[], p = 5): number {
-  if (c.length <= p) return 0;
-  const prev = c[c.length - 1 - p]; return prev ? ((c[c.length - 1] - prev) / prev) * 100 : 0;
-}
-
-function range(a: number, b: number): number[] { const r: number[] = []; for (let i = a; i < b; i++) r.push(i); return r; }
 
 // --- Weights ---
 const MW = { trend: 0.26, momentum: 0.20, volatility: 0.10, structure: 0.18, macro: 0.14, session: 0.04, exhaustion: 0.04, event_risk: 0.04 };
