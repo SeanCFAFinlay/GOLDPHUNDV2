@@ -4,6 +4,8 @@ import { DEFAULT_RISK_CONFIG } from "@/lib/trade-engine";
 import { getRecentAudit } from "@/lib/diagnostics";
 import { validateFeed } from "@/lib/diagnostics";
 import { buildGoldLogicSnapshot } from "@/lib/gold-logic-engine";
+import { runSpectreEngine } from "@/lib/spectre-engine";
+import { buildConsensus } from "@/lib/consensus-arbiter";
 import type { TradeMode, MacroData } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +66,26 @@ export async function GET() {
       }
     }
 
+    // Build Spectre engine output
+    let spectre = null;
+    if (mkt) {
+      const m = mkt as any;
+      const bars10m = m.bars_10m || [];
+      const bars1h = m.bars_1h || [];
+      const bars4h = m.bars_4h || [];
+      try {
+        spectre = runSpectreEngine(bars10m, bars1h, bars4h, "XAUUSD");
+      } catch (e) {
+        console.error("Spectre engine error:", e);
+        spectre = null;
+      }
+    }
+
+    // Build consensus from all 3 engines
+    const spectreScore = spectre?.spectre_score ?? null;
+    const spectreConfidence = spectre?.confidence === "High" ? 0.9 : spectre?.confidence === "Moderate" ? 0.6 : 0.3;
+    const consensus = buildConsensus(latest, goldLogic, spectreScore, spectreConfidence);
+
     return NextResponse.json({
       timestamp: new Date().toISOString(),
       trade_mode: rc.mode,
@@ -91,6 +113,8 @@ export async function GET() {
       notification_channels: { telegram: !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) },
       recent_audit: audit,
       gold_logic: goldLogic,
+      spectre: spectre,
+      consensus: consensus,
       version: "2.0.0",
     });
   } catch (e: any) {

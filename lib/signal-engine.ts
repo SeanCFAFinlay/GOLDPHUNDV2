@@ -3,12 +3,13 @@
 // Every function computes real values. No mock outputs.
 // ============================================================
 
-import type { Bar, FactorResult, SignalOutput, SignalState, RiskLevel, StructureLevels, MacroData } from "./types";
+import type { Bar, FactorResult, SignalOutput, SignalState, RiskLevel, StructureLevels, MacroData, ActiveRegime } from "./types";
 import {
   clamp, tanhN, sigmoid,
   ema, rsi, macd, atr, bollingerBands, adx, vwap, roc, range
 } from "./math/indicators";
 import { SIGNAL_ENGINE_WEIGHTS as W_CFG } from "./config/weights";
+import { getMinutesToNextEventSync } from "./calendar";
 
 // --- Local aliases for compatibility ---
 const sigm = sigmoid;
@@ -38,6 +39,14 @@ function adxC(h: number[], l: number[], c: number[], p = 14) {
 // --- Weights ---
 const MW = { trend: 0.26, momentum: 0.20, volatility: 0.10, structure: 0.18, macro: 0.14, session: 0.04, exhaustion: 0.04, event_risk: 0.04 };
 const TW = { p20: 0.10, e2050: 0.15, e50200: 0.20, sl: 0.15, h1: 0.20, h4: 0.20 };
+
+// --- REGIME-ADAPTIVE WEIGHT STACKS ---
+const REGIME_MW: Record<ActiveRegime, typeof MW> = {
+  TREND: { trend: 0.30, momentum: 0.22, volatility: 0.08, structure: 0.16, macro: 0.12, session: 0.04, exhaustion: 0.04, event_risk: 0.04 },
+  RANGE: { trend: 0.18, momentum: 0.18, volatility: 0.12, structure: 0.26, macro: 0.14, session: 0.04, exhaustion: 0.04, event_risk: 0.04 },
+  BREAKOUT: { trend: 0.24, momentum: 0.26, volatility: 0.14, structure: 0.14, macro: 0.10, session: 0.04, exhaustion: 0.04, event_risk: 0.04 },
+  COMPRESSION: { trend: 0.20, momentum: 0.16, volatility: 0.20, structure: 0.20, macro: 0.12, session: 0.04, exhaustion: 0.04, event_risk: 0.04 },
+};
 const MoW = { rsi: 0.25, macd: 0.30, roc: 0.15, body: 0.15, per: 0.15 };
 const VoW = { atr: 0.30, bbw: 0.25, rng: 0.25, brk: 0.20 };
 const StW = { vw: 0.25, pd: 0.25, sw: 0.20, br: 0.20, rj: 0.10 };
@@ -63,8 +72,37 @@ function scoreTrend(bars: Bar[], h1b = 0, h4b = 0): FactorResult {
 }
 
 // ============================================================
-// FACTOR 2: MOMENTUM
+// FACTOR 2: MOMENTUM (with velocity/slope dimension)
 // ============================================================
+function momentumSlope(closes: number[], period = 5): { slope: number; velocity: "accelerating" | "decelerating" | "steady" } {
+  if (closes.length < period + 2) return { slope: 0, velocity: "steady" };
+
+  // Calculate momentum values for the last few bars
+  const momValues: number[] = [];
+  for (let i = closes.length - period; i < closes.length; i++) {
+    const prev = closes[i - period] ?? closes[0];
+    momValues.push(closes[i] - prev);
+  }
+
+  // Linear regression slope of momentum values
+  const n = momValues.length;
+  const xMean = (n - 1) / 2;
+  const yMean = momValues.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (i - xMean) * (momValues[i] - yMean);
+    den += (i - xMean) ** 2;
+  }
+  const slope = den > 0 ? num / den : 0;
+
+  // Determine velocity state
+  const velocity: "accelerating" | "decelerating" | "steady" =
+    slope > 0.5 ? "accelerating" :
+    slope < -0.5 ? "decelerating" : "steady";
+
+  return { slope, velocity };
+}
+
 function scoreMomentum(bars: Bar[]): FactorResult {
   const c = bars.map(b => b.close), h = bars.map(b => b.high), l = bars.map(b => b.low);
   if (c.length < 15) return { score: 0, components: {}, metadata: {} };
@@ -77,8 +115,28 @@ function scoreMomentum(bars: Bar[]): FactorResult {
   const sB = ar > 0 ? tanhN(bs / ar, 1) : 0;
   const bu = rec.filter(b => b.close > b.open).length, be = rec.filter(b => b.close < b.open).length;
   const sP = clamp(((bu - be) / 5) * 100, -100, 100);
-  const raw = MoW.rsi * sR + MoW.macd * sM + MoW.roc * sRo + MoW.body * sB + MoW.per * sP;
-  return { score: clamp(raw, -100, 100), components: { sR, sM, sRo, sB, sP }, metadata: { rsi: +rv.toFixed(1), macdHist: +(hist[hist.length - 1] || 0).toFixed(4), roc: +rc.toFixed(3), adx, candlePressure: bs > 0 ? "bullish" : bs < 0 ? "bearish" : "flat" } };
+
+  // Momentum slope/velocity
+  const { slope, velocity } = momentumSlope(c, 5);
+  const sSlope = tanhN(slope, 0.5);
+
+  // Adjust weights to include slope (reduce others proportionally)
+  const adjMoW = { rsi: 0.22, macd: 0.26, roc: 0.13, body: 0.13, per: 0.13, slope: 0.13 };
+  const raw = adjMoW.rsi * sR + adjMoW.macd * sM + adjMoW.roc * sRo + adjMoW.body * sB + adjMoW.per * sP + adjMoW.slope * sSlope;
+
+  return {
+    score: clamp(raw, -100, 100),
+    components: { sR, sM, sRo, sB, sP, sSlope },
+    metadata: {
+      rsi: +rv.toFixed(1),
+      macdHist: +(hist[hist.length - 1] || 0).toFixed(4),
+      roc: +rc.toFixed(3),
+      adx,
+      candlePressure: bs > 0 ? "bullish" : bs < 0 ? "bearish" : "flat",
+      momentumSlope: +slope.toFixed(3),
+      velocity,
+    }
+  };
 }
 
 // ============================================================
@@ -138,24 +196,133 @@ function scoreMacro(data: MacroData): FactorResult {
 }
 
 // ============================================================
-// FACTOR 6: SESSION (real UTC-based scoring)
+// DST-AWARE SESSION HELPERS
+// ============================================================
+
+/**
+ * Determines if US is currently observing DST
+ * US DST: Second Sunday of March to First Sunday of November
+ */
+function isUSDST(date: Date): boolean {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+
+  // March: DST starts second Sunday
+  if (month === 2) {
+    let secondSunday = 8;
+    while (new Date(Date.UTC(year, 2, secondSunday)).getUTCDay() !== 0) secondSunday++;
+    return day >= secondSunday;
+  }
+  // November: DST ends first Sunday
+  if (month === 10) {
+    let firstSunday = 1;
+    while (new Date(Date.UTC(year, 10, firstSunday)).getUTCDay() !== 0) firstSunday++;
+    return day < firstSunday;
+  }
+  // April-October: DST active
+  return month > 2 && month < 10;
+}
+
+/**
+ * Determines if UK/EU is currently observing DST
+ * EU DST: Last Sunday of March to Last Sunday of October
+ */
+function isEUDST(date: Date): boolean {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+
+  // March: DST starts last Sunday
+  if (month === 2) {
+    let lastSunday = 31;
+    while (new Date(Date.UTC(year, 2, lastSunday)).getUTCDay() !== 0) lastSunday--;
+    return day >= lastSunday;
+  }
+  // October: DST ends last Sunday
+  if (month === 9) {
+    let lastSunday = 31;
+    while (new Date(Date.UTC(year, 9, lastSunday)).getUTCDay() !== 0) lastSunday--;
+    return day < lastSunday;
+  }
+  // April-September: DST active
+  return month > 2 && month < 9;
+}
+
+/**
+ * Gets DST-adjusted session boundaries in UTC hours
+ */
+function getSessionBoundaries(date: Date): {
+  londonOpen: number; londonClose: number;
+  nyOpen: number; nyClose: number;
+  asiaOpen: number; asiaClose: number;
+} {
+  const usDST = isUSDST(date);
+  const euDST = isEUDST(date);
+
+  // London: 8:00 AM local (GMT/BST)
+  const londonOpen = euDST ? 7 : 8;   // UTC
+  const londonClose = euDST ? 15 : 16; // UTC (4:00 PM local)
+
+  // NY: 9:30 AM local (EST/EDT)
+  const nyOpen = usDST ? 13 : 14;     // UTC (actually 13:30/14:30)
+  const nyClose = usDST ? 20 : 21;    // UTC
+
+  // Asia (Tokyo): 9:00 AM local (no DST in Japan)
+  const asiaOpen = 0;   // UTC (midnight)
+  const asiaClose = 6;  // UTC
+
+  return { londonOpen, londonClose, nyOpen, nyClose, asiaOpen, asiaClose };
+}
+
+// ============================================================
+// FACTOR 6: SESSION (DST-aware scoring)
 // ============================================================
 function scoreSession(): FactorResult {
-  const h = new Date().getUTCHours();
-  const map: [number[], string, number][] = [
-    [range(13, 16), "London/NY Overlap", 30],
-    [range(13, 15), "NY Open", 25],
-    [range(7, 9), "London Open", 20],
-    [range(16, 21), "Late NY", 5],
-    [range(0, 7), "Asia Quiet", -5],
-  ];
-  // Overlap check first (most specific)
-  if (h >= 13 && h < 16) return { score: 30, components: {}, metadata: { label: "London/NY Overlap" } };
-  if (h >= 12 && h < 13) return { score: 25, components: {}, metadata: { label: "NY Open" } };
-  if (h >= 7 && h < 12) return { score: 20, components: {}, metadata: { label: "London Session" } };
-  if (h >= 16 && h < 21) return { score: 5, components: {}, metadata: { label: "Late NY" } };
-  if (h >= 0 && h < 7) return { score: -5, components: {}, metadata: { label: "Asia Quiet" } };
-  return { score: -15, components: {}, metadata: { label: "Off-hours" } };
+  const now = new Date();
+  const h = now.getUTCHours();
+  const m = now.getUTCMinutes();
+  const hourFrac = h + m / 60; // e.g., 13:30 = 13.5
+
+  const { londonOpen, londonClose, nyOpen, nyClose, asiaOpen, asiaClose } = getSessionBoundaries(now);
+
+  // Calculate overlap window (most valuable trading time)
+  const overlapStart = Math.max(londonOpen, nyOpen - 0.5); // NY opens 30 min into calculation
+  const overlapEnd = Math.min(londonClose, nyOpen + 3);   // ~3 hours of overlap
+
+  // Check sessions in priority order
+  // 1. London/NY Overlap - highest liquidity
+  if (hourFrac >= overlapStart && hourFrac < overlapEnd) {
+    return { score: 30, components: {}, metadata: { label: "London/NY Overlap", dst: { us: isUSDST(now), eu: isEUDST(now) } } };
+  }
+
+  // 2. NY Open (first hour of NY session)
+  if (hourFrac >= nyOpen - 0.5 && hourFrac < nyOpen + 1) {
+    return { score: 25, components: {}, metadata: { label: "NY Open", dst: { us: isUSDST(now), eu: isEUDST(now) } } };
+  }
+
+  // 3. London Session (outside overlap)
+  if (hourFrac >= londonOpen && hourFrac < londonClose) {
+    return { score: 20, components: {}, metadata: { label: "London Session", dst: { us: isUSDST(now), eu: isEUDST(now) } } };
+  }
+
+  // 4. Late NY (after overlap ends)
+  if (hourFrac >= overlapEnd && hourFrac < nyClose) {
+    return { score: 5, components: {}, metadata: { label: "Late NY", dst: { us: isUSDST(now), eu: isEUDST(now) } } };
+  }
+
+  // 5. Asia Session (low gold liquidity)
+  if (hourFrac >= asiaOpen && hourFrac < asiaClose) {
+    return { score: -5, components: {}, metadata: { label: "Asia Session", dst: { us: isUSDST(now), eu: isEUDST(now) } } };
+  }
+
+  // 6. Off-hours / weekend
+  const day = now.getUTCDay();
+  if (day === 0 || day === 6) {
+    return { score: -25, components: {}, metadata: { label: "Weekend", dst: { us: isUSDST(now), eu: isEUDST(now) } } };
+  }
+
+  return { score: -15, components: {}, metadata: { label: "Off-hours", dst: { us: isUSDST(now), eu: isEUDST(now) } } };
 }
 
 // ============================================================
@@ -186,53 +353,8 @@ function scoreExhaustion(bars: Bar[], mom: FactorResult, str: FactorResult): Fac
 // FACTOR 8: EVENT RISK (real calendar-based)
 // ============================================================
 export function getMinutesToNextEvent(): number | null {
-  const now = new Date();
-  const utc = now.getTime();
-  // Known high-impact recurring events (UTC times)
-  // NFP: First Friday each month at 13:30 UTC
-  // CPI: ~10th-13th each month at 13:30 UTC
-  // FOMC: 8x/year at 19:00 UTC
-  // Jobless Claims: every Thursday at 13:30 UTC
-  const events = generateUpcomingEvents(now);
-  let closest = Infinity;
-  for (const ev of events) {
-    const diff = (ev.getTime() - utc) / 60000; // minutes
-    if (diff > 0 && diff < closest) closest = diff;
-  }
-  return closest === Infinity ? null : Math.round(closest);
-}
-
-function generateUpcomingEvents(now: Date): Date[] {
-  const events: Date[] = [];
-  const y = now.getUTCFullYear(), m = now.getUTCMonth();
-  // Check current and next month
-  for (let mo = m; mo <= m + 1; mo++) {
-    const month = mo % 12, year = mo > 11 ? y + 1 : y;
-    // NFP: first Friday of month at 13:30 UTC
-    const firstDay = new Date(Date.UTC(year, month, 1));
-    let nfpDay = 1;
-    while (new Date(Date.UTC(year, month, nfpDay)).getUTCDay() !== 5) nfpDay++;
-    events.push(new Date(Date.UTC(year, month, nfpDay, 13, 30)));
-    // CPI: typically 10th-13th, approximate as 12th at 13:30
-    events.push(new Date(Date.UTC(year, month, 12, 13, 30)));
-    // Jobless claims: every Thursday at 13:30
-    for (let d = 1; d <= 28; d++) {
-      if (new Date(Date.UTC(year, month, d)).getUTCDay() === 4) {
-        events.push(new Date(Date.UTC(year, month, d, 13, 30)));
-      }
-    }
-  }
-  // FOMC: known 2025-2026 dates (approximated, 19:00 UTC)
-  const fomcDates = [
-    "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
-    "2025-07-30", "2025-09-17", "2025-11-05", "2025-12-17",
-    "2026-01-28", "2026-03-18", "2026-05-06", "2026-06-17",
-    "2026-07-29", "2026-09-16", "2026-11-04", "2026-12-16",
-  ];
-  for (const d of fomcDates) {
-    events.push(new Date(d + "T19:00:00Z"));
-  }
-  return events;
+  // Uses the calendar module's synchronous function for hot path
+  return getMinutesToNextEventSync();
 }
 
 function scoreEventRisk(minutesToEvent: number | null): FactorResult {
@@ -266,6 +388,48 @@ function confLbl(prob: number): [string, number] {
   const p = Math.max(prob, 1 - prob);
   for (const [t, l] of CL) if (p >= t) return [l, p];
   return ["Weak / Mixed", p];
+}
+
+// ============================================================
+// REGIME DETECTION
+// ============================================================
+function detectRegime(bars: Bar[]): ActiveRegime {
+  if (bars.length < 30) return "RANGE"; // Default for insufficient data
+
+  const h = bars.map(b => b.high), l = bars.map(b => b.low), c = bars.map(b => b.close);
+  const adxR = adxC(h, l, c);
+  const bb = bbC(c, 20, 2);
+  const atrVal = atrC(h, l, c);
+
+  // Historical ATR for comparison
+  const histBars = bars.slice(0, -10);
+  const hH = histBars.map(b => b.high), hL = histBars.map(b => b.low), hC = histBars.map(b => b.close);
+  const histAtr = histBars.length >= 20 ? atrC(hH, hL, hC) : atrVal;
+  const atrRatio = histAtr > 0 ? atrVal / histAtr : 1;
+
+  // Check for compression (squeeze)
+  const bbWidth = bb.w;
+  const isCompressed = bbWidth < 0.3 && atrRatio < 0.8;
+
+  // Check for breakout (expanding volatility + strong momentum)
+  const recent5 = c.slice(-5);
+  const prev5 = c.slice(-10, -5);
+  const recentRange = Math.max(...bars.slice(-5).map(b => b.high)) - Math.min(...bars.slice(-5).map(b => b.low));
+  const prevRange = Math.max(...bars.slice(-10, -5).map(b => b.high)) - Math.min(...bars.slice(-10, -5).map(b => b.low));
+  const rangeExpansion = prevRange > 0 ? recentRange / prevRange : 1;
+  const isBreakout = atrRatio > 1.3 && rangeExpansion > 1.5;
+
+  // Check for trend (ADX + directional movement)
+  const isTrending = adxR.adx > 25 && Math.abs(adxR.pdi - adxR.mdi) > 10;
+
+  if (isCompressed) return "COMPRESSION";
+  if (isBreakout) return "BREAKOUT";
+  if (isTrending) return "TREND";
+  return "RANGE";
+}
+
+function resolveActiveWeights(regime: ActiveRegime): typeof MW {
+  return REGIME_MW[regime];
 }
 
 // ============================================================
@@ -319,11 +483,27 @@ export function runSignalEngine(
 
   const factors: Record<string, FactorResult> = { trend, momentum, volatility, structure, macro: macroF, session, exhaustion, event_risk: eventRisk };
 
-  // Weighted master score
+  // Detect active regime and resolve weights
+  const activeRegime = detectRegime(bars10m);
+  let W = resolveActiveWeights(activeRegime);
+
+  // Macro weight redistribution when feed is down
+  if (!macro.live) {
+    // Redistribute macro weight to trend and structure
+    const macroWeight = W.macro;
+    W = {
+      ...W,
+      macro: 0,  // Zero out macro weight
+      trend: W.trend + macroWeight * 0.5,       // 50% to trend
+      structure: W.structure + macroWeight * 0.5 // 50% to structure
+    };
+  }
+
+  // Weighted master score (regime-adaptive)
   const master = clamp(
-    MW.trend * trend.score + MW.momentum * momentum.score + MW.volatility * volatility.score +
-    MW.structure * structure.score + MW.macro * macroF.score + MW.session * session.score +
-    MW.exhaustion * exhaustion.score + MW.event_risk * eventRisk.score, -100, 100);
+    W.trend * trend.score + W.momentum * momentum.score + W.volatility * volatility.score +
+    W.structure * structure.score + W.macro * macroF.score + W.session * session.score +
+    W.exhaustion * exhaustion.score + W.event_risk * eventRisk.score, -100, 100);
 
   const pBull = sigm(master), pBear = 1 - pBull;
   const [cl, cp] = confLbl(pBull);
@@ -371,5 +551,6 @@ export function runSignalEngine(
     data_quality: dq,
     tf_biases: { "10m": +m10b.toFixed(3), "1h": +h1b.toFixed(3), "4h": +h4b.toFixed(3) },
     alert_fired: false,
+    activeRegime,
   };
 }

@@ -23,13 +23,14 @@ export type MarketRegime = "TREND" | "RANGE" | "BREAKOUT" | "REVERSAL_RISK" | "E
 export type TradeQuality = "A_PLUS" | "A" | "B" | "C" | "NO_TRADE";
 export type RiskState = "NORMAL" | "CAUTION" | "HIGH_VOLATILITY" | "EVENT_LOCKOUT";
 export type IndicatorDirection = "BULLISH" | "BEARISH" | "NEUTRAL" | "UNAVAILABLE";
+export type VolatilityDirection = "EXPANDING" | "CONTRACTING" | "NORMAL" | "UNAVAILABLE";
 
 export interface IndicatorRow {
   name: string;
   category: "trend" | "momentum" | "volatility" | "structure" | "macro";
   rawValue: number | string | null;
   normalized: number | null;
-  direction: IndicatorDirection;
+  direction: IndicatorDirection | VolatilityDirection;
   weight: number;
   reliability: number;
   regimeFit: string;
@@ -60,9 +61,9 @@ export interface GoldLogicSnapshot {
     macro: number;
   };
   timeframeScores: {
-    m5: number;
+    m5: number | null;   // null if no M5 data from MT5
     m10: number;
-    m15: number;
+    m15: number | null;  // null if no M15 data from MT5
     h1: number;
     h4: number;
   };
@@ -365,7 +366,7 @@ function scoreVolatilityCategory(bars: Bar[]): { score: number; indicators: Indi
 
   indicators.push({
     name: "ATR (14)", category: "volatility", rawValue: +atrVal.toFixed(2), normalized: +atrNorm.toFixed(3),
-    direction: atrRatio > 1.2 ? "BULLISH" : atrRatio < 0.8 ? "BEARISH" : "NEUTRAL",
+    direction: atrRatio > 1.2 ? "EXPANDING" : atrRatio < 0.8 ? "CONTRACTING" : "NORMAL",
     weight: 0.20, reliability: 0.90, regimeFit: "ALL", status: "active"
   });
 
@@ -377,7 +378,7 @@ function scoreVolatilityCategory(bars: Bar[]): { score: number; indicators: Indi
   const natrNorm = normalize(natrVal, 0.1, 0.4);
   indicators.push({
     name: "NATR", category: "volatility", rawValue: +natrVal.toFixed(3), normalized: +natrNorm.toFixed(3),
-    direction: natrVal > 0.3 ? "BULLISH" : natrVal < 0.15 ? "BEARISH" : "NEUTRAL",
+    direction: natrVal > 0.3 ? "EXPANDING" : natrVal < 0.15 ? "CONTRACTING" : "NORMAL",
     weight: 0.15, reliability: 0.85, regimeFit: "ALL", status: "active"
   });
 
@@ -386,14 +387,14 @@ function scoreVolatilityCategory(bars: Bar[]): { score: number; indicators: Indi
   const bbWidthNorm = normalize(bb.width, 0.3, 1.5);
   indicators.push({
     name: "BB Width", category: "volatility", rawValue: +bb.width.toFixed(2), normalized: +bbWidthNorm.toFixed(3),
-    direction: bb.width > 1 ? "BULLISH" : bb.width < 0.4 ? "BEARISH" : "NEUTRAL",
+    direction: bb.width > 1 ? "EXPANDING" : bb.width < 0.4 ? "CONTRACTING" : "NORMAL",
     weight: 0.18, reliability: 0.85, regimeFit: "ALL", status: "active"
   });
 
   if (bb.width < 0.4) compressionScore += 35;
   if (bb.width > 1.2) expansionScore += 25;
 
-  // Bollinger %B
+  // Bollinger %B (this IS directional - shows price position within bands)
   const bbPercentBNorm = normalize(bb.percentB, 0.2, 0.8);
   indicators.push({
     name: "BB %B", category: "volatility", rawValue: +bb.percentB.toFixed(2), normalized: +bbPercentBNorm.toFixed(3),
@@ -406,7 +407,7 @@ function scoreVolatilityCategory(bars: Bar[]): { score: number; indicators: Indi
   const kcWidthNorm = normalize(kc.width, 0.3, 1.5);
   indicators.push({
     name: "Keltner Width", category: "volatility", rawValue: +kc.width.toFixed(2), normalized: +kcWidthNorm.toFixed(3),
-    direction: kc.width > 1 ? "BULLISH" : kc.width < 0.4 ? "BEARISH" : "NEUTRAL",
+    direction: kc.width > 1 ? "EXPANDING" : kc.width < 0.4 ? "CONTRACTING" : "NORMAL",
     weight: 0.16, reliability: 0.82, regimeFit: "ALL", status: "active"
   });
 
@@ -417,7 +418,7 @@ function scoreVolatilityCategory(bars: Bar[]): { score: number; indicators: Indi
   const dcWidthNorm = normalize(dcWidthPct, 0.3, 1.5);
   indicators.push({
     name: "Donchian Width", category: "volatility", rawValue: +dcWidthPct.toFixed(2), normalized: +dcWidthNorm.toFixed(3),
-    direction: dcWidthPct > 1 ? "BULLISH" : dcWidthPct < 0.4 ? "BEARISH" : "NEUTRAL",
+    direction: dcWidthPct > 1 ? "EXPANDING" : dcWidthPct < 0.4 ? "CONTRACTING" : "NORMAL",
     weight: 0.16, reliability: 0.80, regimeFit: "BREAKOUT", status: "active"
   });
 
@@ -623,7 +624,7 @@ export function buildGoldLogicSnapshot(
       tradeQuality: "NO_TRADE",
       riskState: "CAUTION",
       categoryScores: { trend: 0, momentum: 0, volatility: 0, structure: 0, macro: 0 },
-      timeframeScores: { m5: 0, m10: 0, m15: 0, h1: 0, h4: 0 },
+      timeframeScores: { m5: null, m10: 0, m15: null, h1: 0, h4: 0 },
       indicators: [],
       scenarios: {
         bull: { trigger: "Insufficient data", invalidation: "N/A", targets: [] },
@@ -667,16 +668,16 @@ export function buildGoldLogicSnapshot(
   };
 
   // Timeframe scores
-  const m5Score = scoreTimeframe(bars10m.slice(-6)); // Approximate M5 from M10
+  // M5 and M15 are set to null - no fabrication from M10 data
+  // These will only be populated when real M5/M15 bars arrive from MT5
   const m10Score = scoreTimeframe(bars10m);
-  const m15Score = scoreTimeframe(bars10m.slice(-Math.floor(bars10m.length * 1.5))); // Approximate
   const h1Score = scoreTimeframe(bars1h);
   const h4Score = scoreTimeframe(bars4h);
 
   const timeframeScores = {
-    m5: +m5Score.toFixed(2),
+    m5: null,  // No M5 data from MT5 yet
     m10: +m10Score.toFixed(2),
-    m15: +m15Score.toFixed(2),
+    m15: null, // No M15 data from MT5 yet
     h1: +h1Score.toFixed(2),
     h4: +h4Score.toFixed(2)
   };

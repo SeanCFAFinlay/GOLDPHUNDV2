@@ -30,9 +30,13 @@ export interface MT5MarketPayload {
   timestamp: string; account_id: string; terminal_id: string; symbol: string;
   bid: number; ask: number; spread_points: number;
   bars_10m: Bar[]; bars_1h?: Bar[]; bars_4h?: Bar[];
+  bars_5m?: Bar[]; bars_15m?: Bar[];  // Optional M5/M15 bars
   indicators?: MT5Indicators; server_time?: string;
   dxy_bid?: number; dxy_prev_10m?: number; dxy_prev_30m?: number;
   us10y_bid?: number; us10y_prev_10m?: number; us10y_prev_30m?: number;
+  prev_day_high?: number;   // True previous day high from MT5
+  prev_day_low?: number;    // True previous day low from MT5
+  prev_day_close?: number;  // True previous day close from MT5
 }
 
 export interface MT5Position {
@@ -74,6 +78,7 @@ export interface SignalOutput {
   data_quality: "full"|"degraded"|"partial";
   tf_biases: Record<string,number>;
   alert_fired: boolean; alert_reason?: string;
+  activeRegime?: ActiveRegime;
 }
 
 export interface MacroData {
@@ -84,6 +89,9 @@ export interface MacroData {
 export interface StructureLevels {
   pdh: number; pdl: number; swing_high: number; swing_low: number;
   session_high: number; session_low: number;
+  pdc?: number;          // Previous day close (optional)
+  pdh_source?: "mt5" | "derived";  // Source of PDH value
+  pdl_source?: "mt5" | "derived";  // Source of PDL value
 }
 
 export interface RiskConfig {
@@ -238,9 +246,9 @@ export interface GoldLogicSnapshot {
     macro: number;
   };
   timeframeScores: {
-    m5: number;
+    m5: number | null;   // null if no M5 data from MT5
     m10: number;
-    m15: number;
+    m15: number | null;  // null if no M15 data from MT5
     h1: number;
     h4: number;
   };
@@ -256,4 +264,34 @@ export interface GoldLogicSnapshot {
   alerts: string[];
   engineVersion: string;
   dataQuality: "full" | "degraded" | "partial";
+}
+
+// ============================================================
+// REGIME Types
+// ============================================================
+
+export type ActiveRegime = "TREND" | "RANGE" | "BREAKOUT" | "COMPRESSION";
+
+// ============================================================
+// CONSENSUS ARBITER Types
+// ============================================================
+
+export type ConsensusDirection = "UP" | "DOWN" | "FLAT";
+export type AgreementLevel = "STRONG_CONSENSUS" | "LEAN" | "MIXED" | "CONFLICT";
+
+export interface EngineVote {
+  engine: "signal" | "gold_logic" | "spectre";
+  direction: ConsensusDirection;
+  score: number;        // Raw score from engine
+  confidence: number;   // 0-1 confidence level
+  weight: number;       // Weight applied in consensus
+}
+
+export interface ConsensusResult {
+  direction: ConsensusDirection;
+  agreement: AgreementLevel;
+  netScore: number;           // Weighted aggregate (-100 to +100)
+  votes: EngineVote[];
+  divergenceFlag: boolean;    // True if engines strongly disagree
+  timestamp: string;
 }
