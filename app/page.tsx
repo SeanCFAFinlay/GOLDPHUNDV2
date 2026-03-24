@@ -707,6 +707,15 @@ function GoldLogicTab({ data }: { data: GoldLogicSnapshot }) {
       <Card title="Timeframe Alignment">
         {(["m5", "m10", "m15", "h1", "h4"] as const).map(tf => {
           const score = data.timeframeScores[tf];
+          // Handle null scores for M5/M15 (no real data from MT5 yet)
+          if (score === null) {
+            return (
+              <div key={tf} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: `1px solid ${C.bd}33`, opacity: 0.5 }}>
+                <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3, width: 36, fontWeight: 700 }}>{tf.toUpperCase()}</span>
+                <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3, fontStyle: "italic" }}>No data</span>
+              </div>
+            );
+          }
           const cl = score > 15 ? C.bu : score < -15 ? C.be : C.nu;
           const arrow = score > 15 ? "↑" : score < -15 ? "↓" : "→";
           return (
