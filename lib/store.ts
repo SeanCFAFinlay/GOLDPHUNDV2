@@ -2,7 +2,7 @@
 // PHUND.CA — Supabase Persistence Layer (Complete)
 // ============================================================
 
-import type { SignalOutput, AlertRecord, MT5AccountPayload, TradeRecord, RiskConfig, AuditEntry, TradeInstruction, MarketCacheEntry, AlertEngineState, DiagCounters } from "./types";
+import type { SignalOutput, AlertRecord, MT5AccountPayload, TradeRecord, RiskConfig, AuditEntry, TradeInstruction, MarketCacheEntry, AlertEngineState, DiagCounters, GoldV2State } from "./types";
 import { env } from "./config/env";
 
 const URL = () => env.supabaseUrl;
@@ -103,6 +103,14 @@ export async function saveAuditEntry(e: AuditEntry) { await sb("phund_audit", "P
 export async function getRecentAudit(limit = 50): Promise<AuditEntry[]> {
   const d = await sb("phund_audit", "GET", `?order=created_at.desc&limit=${limit}&select=data`);
   return d ? d.map((r: any) => r.data) : [];
+}
+
+// --- Gold V2 State ---
+export async function saveV2State(sym: string, state: GoldV2State): Promise<void> {
+  await setState(`v2:${sym}`, state);
+}
+export async function getV2State(sym: string): Promise<GoldV2State | null> {
+  return getState<GoldV2State>(`v2:${sym}`);
 }
 
 // --- Diagnostics counters ---

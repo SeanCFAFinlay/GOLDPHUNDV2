@@ -10,9 +10,10 @@ import { sendTelegram, formatAlert, shouldFireAlert, makeAlertRecord } from "@/l
 import { evaluateTradeDecision, executePaperTrade, buildTradeInstruction, updatePaperTrades, DEFAULT_RISK_CONFIG, type AccountSnapshot, type PaperTradeUpdateResult } from "@/lib/trade-engine";
 import { updateTrade } from "@/lib/store";
 import { validateMarketPayload, validateFeed, incPayloads, incRejected, audit, slog } from "@/lib/diagnostics";
-import { saveSignal, saveAlert, saveMarket, saveTrade, getAlertState, setAlertState, getRiskConfig, getOpenTrades, getAccount, addPendingInstruction, incDiagCounter, saveAuditEntry } from "@/lib/store";
+import { saveSignal, saveAlert, saveMarket, saveTrade, getAlertState, setAlertState, getRiskConfig, getOpenTrades, getAccount, addPendingInstruction, incDiagCounter, saveAuditEntry, saveV2State } from "@/lib/store";
 import { env } from "@/lib/config/env";
 import type { MT5MarketPayload, MacroData } from "@/lib/types";
+import { runGoldV2Pipeline, v2GatesSignalDirection } from "@/lib/engines/gold-v2-pipeline";
 
 /**
  * Timing-safe string comparison to prevent timing attacks on API key validation.
@@ -129,6 +130,47 @@ export async function POST(req: NextRequest) {
       last_trade_time: openTrades.length > 0 ? new Date(openTrades[0].timestamp).getTime() : null,
     };
 
+    // --- Gold V2 Pipeline ---
+    // Determine candidate direction from V1 signal for quality evaluation
+    let candidateDirection: "buy" | "sell" | null = null;
+    if (["strong_bullish","actionable_long","watch_long","breakout_watch_up"].includes(sig.state)) candidateDirection = "buy";
+    else if (["strong_bearish","actionable_short","watch_short","breakout_watch_down"].includes(sig.state)) candidateDirection = "sell";
+
+    let v2State = null;
+    let v2Block = false;
+    let v2BlockReasons: string[] = [];
+    try {
+      v2State = runGoldV2Pipeline(p, {
+        openTrades,
+        dailyPnL: acct?.profit || 0,
+        balance: acct?.balance || 10000,
+        tradeDirection: candidateDirection,
+      });
+
+      // Check if V2 gates the candidate direction
+      if (candidateDirection) {
+        const v2Gate = v2GatesSignalDirection(candidateDirection, v2State);
+        v2Block = !v2Gate.allowed;
+        v2BlockReasons = v2Gate.blockReasons;
+
+        if (v2Block) {
+          slog("WARN", "market", "V2 gated signal", { payloadId, direction: candidateDirection, reasons: v2BlockReasons });
+          allWarnings.push(`V2 blocked ${candidateDirection.toUpperCase()}: ${v2BlockReasons.slice(0, 2).join("; ")}`);
+        }
+      }
+
+      // Persist V2 state for dashboard
+      await saveV2State(sym, v2State).catch(() => {});
+    } catch (v2Err: any) {
+      slog("WARN", "market", "V2 pipeline error (non-blocking)", { error: v2Err.message });
+    }
+
+    // Apply V2 block: override signal to no_trade if V2 rejects
+    if (v2Block && v2BlockReasons.length > 0) {
+      sig.no_trade = true;
+      sig.no_trade_reason = v2BlockReasons[0];
+    }
+
     const tradeDec = evaluateTradeDecision(sig, accountSnap, riskCfg, p.spread_points);
     let tradeResult = null;
     let instruction = null;
@@ -199,6 +241,16 @@ export async function POST(req: NextRequest) {
       signal: { master_score: sig.master_score, state: sig.state, bull_probability: sig.bull_probability, confidence_label: sig.confidence_label, alert_fired: sig.alert_fired, telegram_sent: tgSent },
       trade_decision: { order_id: tradeDec.order_id, decision: tradeDec.decision, approved: tradeDec.approved, direction: tradeDec.direction, volume: tradeDec.volume, rejection_reasons: tradeDec.rejection_reasons },
       instructions: instruction ? [instruction] : [],
+      v2: v2State ? {
+        regime: v2State.regime.regime,
+        confidence: v2State.regime.confidence,
+        allowBuy: v2State.tradePermission.allowBuy,
+        allowSell: v2State.tradePermission.allowSell,
+        blockReasons: v2State.tradePermission.blockReasons,
+        spreadSafe: v2State.spreadGate.spreadSafe,
+        actionLabel: v2State.explanation.actionLabel,
+        structure: { bosUp: v2State.structure.bosUp, bosDown: v2State.structure.bosDown, chochUp: v2State.structure.chochUp, chochDown: v2State.structure.chochDown },
+      } : null,
     });
 
   } catch (e: any) {

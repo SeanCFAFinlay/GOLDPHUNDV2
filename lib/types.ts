@@ -295,3 +295,168 @@ export interface ConsensusResult {
   divergenceFlag: boolean;    // True if engines strongly disagree
   timestamp: string;
 }
+
+// ============================================================
+// GOLD LOGIC V2 ENGINE TYPES
+// ============================================================
+
+// --- Data Integrity Engine ---
+export interface DataIntegrityState {
+  feedHealthy: boolean;
+  staleData: boolean;
+  mtfAligned: boolean;
+  spreadPresent: boolean;
+  enoughBars: boolean;
+  validOHLC: boolean;
+  qualityScore: number;         // 0-100
+  blockReasons: string[];
+  warnings: string[];
+}
+
+// --- Spread Gate Engine ---
+export interface SpreadGateState {
+  spread: number;
+  spreadPoints: number;
+  atr: number;
+  spreadToAtr: number;
+  spreadSafe: boolean;
+  spikeDetected: boolean;
+  cooldownBarsRemaining: number;
+  regime: "tight" | "normal" | "wide" | "spike";
+  blockReasons: string[];
+}
+
+// --- Structure Engine ---
+export type StructureTrend = "bullish" | "bearish" | "range";
+
+export interface SwingPoint { price: number; index: number; time?: string; }
+
+export interface StructureState {
+  m5Trend: StructureTrend;
+  m15Trend: StructureTrend;
+  h1Bias: "bullish" | "bearish" | "neutral";
+  bosUp: boolean;               // Bullish break of structure
+  bosDown: boolean;             // Bearish break of structure
+  chochUp: boolean;             // Bullish change of character
+  chochDown: boolean;           // Bearish change of character
+  bullishSweep: boolean;        // Sweep of lows + recovery
+  bearishSweep: boolean;        // Sweep of highs + rejection
+  lastSwingHigh?: number;
+  lastSwingLow?: number;
+  prevSwingHigh?: number;
+  prevSwingLow?: number;
+  structureConfidence: number;  // 0-100
+  bullishBias: boolean;
+  bearishBias: boolean;
+  notes: string[];
+}
+
+// --- Regime Engine ---
+export type MarketRegimeV2 =
+  | "bullish_trend"
+  | "bearish_trend"
+  | "bullish_reversal"
+  | "bearish_reversal"
+  | "range"
+  | "breakout_expansion"
+  | "unsafe";
+
+export interface RegimeState {
+  regime: MarketRegimeV2;
+  confidence: number;     // 0-100
+  allowBuy: boolean;
+  allowSell: boolean;
+  noTrade: boolean;
+  reasons: string[];
+  warnings: string[];
+}
+
+// --- Indicator Matrix ---
+export interface IndicatorMatrix {
+  trendScore: number;           // -100 to +100
+  momentumScore: number;        // -100 to +100
+  volatilityScore: number;      // 0 to 100 (context, not directional)
+  participationScore: number;   // -100 to +100
+  structureScore: number;       // -100 to +100
+  overallBias: number;          // -100 to +100 weighted composite
+  divergenceWarnings: string[];
+  summary: string[];
+}
+
+// --- Entry Quality Engine ---
+export interface EntryQualityState {
+  canBuy: boolean;
+  canSell: boolean;
+  entryQualityScore: number;    // 0-100
+  targetSpaceOk: boolean;
+  rrOk: boolean;
+  confirmationOk: boolean;
+  pullbackValid: boolean;
+  reasons: string[];
+  blockReasons: string[];
+}
+
+// --- Risk Governor ---
+export interface RiskGovernorState {
+  blockAllEntries: boolean;
+  blockBuy: boolean;
+  blockSell: boolean;
+  maxExposureReached: boolean;
+  wrongSideFreeze: boolean;
+  wrongSideFreezeDirection?: "buy" | "sell";
+  dailyLossLock: boolean;
+  regimeInvalidationFreeze: boolean;
+  reasons: string[];
+  openBuys: number;
+  openSells: number;
+}
+
+// --- Trade Permission (final gate) ---
+export interface TradePermission {
+  allowBuy: boolean;
+  allowSell: boolean;
+  allowNewTrade: boolean;
+  regime: string;
+  confidence: number;
+  blockReasons: string[];
+  warnings: string[];
+}
+
+// --- Explanation Engine ---
+export interface ExplanationOutput {
+  regimeLabel: string;
+  regimeColor: "green" | "red" | "yellow" | "gray";
+  confidencePct: number;
+  buyStatus: "enabled" | "blocked";
+  sellStatus: "enabled" | "blocked";
+  buyBlockReasons: string[];
+  sellBlockReasons: string[];
+  spreadLabel: string;
+  spreadSafe: boolean;
+  spreadDetails: { spread: number; atr: number; ratio: number; label: string };
+  structureNotes: string[];
+  structureFlags: { bosUp: boolean; bosDown: boolean; chochUp: boolean; chochDown: boolean; bullishSweep: boolean; bearishSweep: boolean };
+  indicatorSummary: { trend: number; momentum: number; volatility: number; participation: number; divergences: string[] };
+  actionLabel: "BUY SETUP READY" | "SELL SETUP READY" | "WAIT" | "NO TRADE";
+  actionColor: "green" | "red" | "yellow" | "gray";
+  actionReasons: string[];
+  riskSummary: { openBuys: number; openSells: number; wrongSideFreeze: boolean; dailyLock: boolean; drawdownLock: boolean };
+  dataIntegrityOk: boolean;
+  dataIntegrityIssues: string[];
+  cooldownActive: boolean;
+  cooldownBarsLeft: number;
+}
+
+// --- V2 Pipeline Output (attached to market response) ---
+export interface GoldV2State {
+  timestamp: string;
+  dataIntegrity: DataIntegrityState;
+  spreadGate: SpreadGateState;
+  structure: StructureState;
+  regime: RegimeState;
+  indicatorMatrix: IndicatorMatrix;
+  entryQuality: EntryQualityState;
+  riskGovernor: RiskGovernorState;
+  tradePermission: TradePermission;
+  explanation: ExplanationOutput;
+}

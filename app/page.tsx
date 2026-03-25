@@ -9,7 +9,9 @@ interface Consensus { direction: string; agreement: string; netScore: number; vo
 interface Alrt { id: string; timestamp: string; severity: string; title: string; body: string; signal_state: string; master_score: number; trigger_reason: string; channels_sent: string[]; telegram_sent: boolean; }
 interface Acct { balance: number; equity: number; margin: number; free_margin: number; profit: number; positions: Pos[]; }
 interface Health { mt5_connected: boolean; mt5_last_heartbeat: string | null; mt5_last_payload: string | null; total_payloads: number; alerts_count?: number; open_positions: number; daily_pnl: number; }
-interface Dash { timestamp: string; trade_mode: string; health: Health; latest_signal: Sig | null; scan_history: Sig[]; recent_alerts: Alrt[]; trade_history: any[]; market_cache: Record<string, any>; account: Acct | null; notification_channels: Record<string, boolean>; gold_logic?: GoldLogicSnapshot | null; spectre?: SpectreOutput | null; consensus?: Consensus | null; version?: string; }
+interface GoldV2Expl { regimeLabel: string; regimeColor: string; confidencePct: number; buyStatus: string; sellStatus: string; buyBlockReasons: string[]; sellBlockReasons: string[]; spreadLabel: string; spreadSafe: boolean; spreadDetails: { spread: number; atr: number; ratio: number; label: string }; structureNotes: string[]; structureFlags: { bosUp: boolean; bosDown: boolean; chochUp: boolean; chochDown: boolean; bullishSweep: boolean; bearishSweep: boolean }; indicatorSummary: { trend: number; momentum: number; volatility: number; participation: number; divergences: string[] }; actionLabel: string; actionColor: string; actionReasons: string[]; riskSummary: { openBuys: number; openSells: number; wrongSideFreeze: boolean; dailyLock: boolean; drawdownLock: boolean }; dataIntegrityOk: boolean; dataIntegrityIssues: string[]; cooldownActive: boolean; cooldownBarsLeft: number; }
+interface GoldV2State { timestamp: string; regime: { regime: string; confidence: number; allowBuy: boolean; allowSell: boolean; noTrade: boolean; reasons: string[]; warnings: string[] }; spreadGate: { spreadPoints: number; atr: number; spreadToAtr: number; spreadSafe: boolean; spikeDetected: boolean; cooldownBarsRemaining: number; regime: string; blockReasons: string[] }; structure: { m5Trend: string; m15Trend: string; h1Bias: string; bosUp: boolean; bosDown: boolean; chochUp: boolean; chochDown: boolean; bullishSweep: boolean; bearishSweep: boolean; lastSwingHigh?: number; lastSwingLow?: number; structureConfidence: number; notes: string[] }; indicatorMatrix: { trendScore: number; momentumScore: number; volatilityScore: number; participationScore: number; overallBias: number; divergenceWarnings: string[]; summary: string[] }; riskGovernor: { blockAllEntries: boolean; blockBuy: boolean; blockSell: boolean; maxExposureReached: boolean; wrongSideFreeze: boolean; dailyLossLock: boolean; openBuys: number; openSells: number; reasons: string[] }; tradePermission: { allowBuy: boolean; allowSell: boolean; allowNewTrade: boolean; regime: string; confidence: number; blockReasons: string[]; warnings: string[] }; explanation: GoldV2Expl; }
+interface Dash { timestamp: string; trade_mode: string; health: Health; latest_signal: Sig | null; scan_history: Sig[]; recent_alerts: Alrt[]; trade_history: any[]; market_cache: Record<string, any>; account: Acct | null; notification_channels: Record<string, boolean>; gold_logic?: GoldLogicSnapshot | null; spectre?: SpectreOutput | null; consensus?: Consensus | null; gold_v2?: GoldV2State | null; version?: string; }
 interface SpectreOutput { timestamp: string; symbol: string; price: number; spectre_score: number; state: string; confidence: string; ichimoku: {score:number;meta:Record<string,any>}; squeeze: {score:number;meta:Record<string,any>}; smart_money: {score:number;meta:Record<string,any>}; fibonacci: {score:number;meta:Record<string,any>}; oscillators: {score:number;meta:Record<string,any>}; weights: Record<string,number>; data_quality: string; }
 
 // Gold Logic AI Types (V2)
@@ -142,6 +144,200 @@ function TfRow({ tf, bias }: { tf: string; bias: number }) {
         {isBear && <div style={{ position: "absolute", right: "50%", width: `${strength * 50}%`, height: "100%", background: `linear-gradient(270deg, ${cl}66, ${cl})`, borderRadius: 2, transition: "all 0.6s" }} />}
       </div>
       <Bdg t={label} c={cl} sz="sm" />
+    </div>
+  );
+}
+
+// V2 color helpers
+const v2RegimeColor = (rc: string) => rc === "green" ? C.bu : rc === "red" ? C.be : rc === "yellow" ? C.wa : C.nu;
+const v2ActionColor = (ac: string) => ac === "green" ? C.bu : ac === "red" ? C.be : ac === "yellow" ? C.wa : C.nu;
+
+function GoldV2Banner({ v2 }: { v2: GoldV2State }) {
+  const e = v2.explanation;
+  const rc = v2RegimeColor(e.regimeColor);
+  const ac = v2ActionColor(e.actionColor);
+  return (
+    <div style={{ background: `${rc}0a`, borderBottom: `1px solid ${rc}22`, padding: "6px 16px", display: "flex", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+      {/* Regime */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ fontFamily: F.m, fontSize: 9, color: C.t3, letterSpacing: "0.08em" }}>V2 REGIME</span>
+        <span style={{ fontFamily: F.m, fontSize: 12, fontWeight: 800, color: rc }}>{e.regimeLabel}</span>
+        <span style={{ fontFamily: F.m, fontSize: 10, color: C.t3 }}>{e.confidencePct.toFixed(0)}%</span>
+      </div>
+      {/* Action */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ fontFamily: F.m, fontSize: 9, color: C.t3 }}>ACTION</span>
+        <Bdg t={e.actionLabel} c={ac} sz="sm" />
+      </div>
+      {/* Direction gates */}
+      <div style={{ display: "flex", gap: 8 }}>
+        <span style={{ fontFamily: F.m, fontSize: 10, fontWeight: 700, color: e.buyStatus === "enabled" ? C.bu : C.be }}>BUY {e.buyStatus === "enabled" ? "✓" : "✗"}</span>
+        <span style={{ fontFamily: F.m, fontSize: 10, fontWeight: 700, color: e.sellStatus === "enabled" ? C.bu : C.be }}>SELL {e.sellStatus === "enabled" ? "✓" : "✗"}</span>
+      </div>
+      {/* Spread */}
+      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+        <Dot ok={e.spreadSafe} />
+        <span style={{ fontFamily: F.m, fontSize: 10, color: e.spreadSafe ? C.t2 : C.be }}>{e.spreadLabel}</span>
+      </div>
+      {/* Structure flags */}
+      <div style={{ display: "flex", gap: 5 }}>
+        {e.structureFlags.bosUp && <Bdg t="BOS↑" c={C.bu} sz="sm" />}
+        {e.structureFlags.bosDown && <Bdg t="BOS↓" c={C.be} sz="sm" />}
+        {e.structureFlags.chochUp && <Bdg t="CHoCH↑" c={C.bb} sz="sm" />}
+        {e.structureFlags.chochDown && <Bdg t="CHoCH↓" c={C.br} sz="sm" />}
+        {e.structureFlags.bullishSweep && <Bdg t="SWEEP↑" c={C.bu} sz="sm" />}
+        {e.structureFlags.bearishSweep && <Bdg t="SWEEP↓" c={C.be} sz="sm" />}
+      </div>
+      {/* Wrong-side freeze warning */}
+      {e.riskSummary.wrongSideFreeze && <Bdg t="WRONG-SIDE FREEZE" c={C.wa} sz="sm" />}
+      {e.cooldownActive && <Bdg t={`COOLDOWN ${e.cooldownBarsLeft}b`} c={C.wa} sz="sm" />}
+      {!e.dataIntegrityOk && <Bdg t="DATA ISSUE" c={C.be} sz="sm" />}
+    </div>
+  );
+}
+
+function GoldV2Panel({ v2 }: { v2: GoldV2State }) {
+  const e = v2.explanation;
+  const rc = v2RegimeColor(e.regimeColor);
+  const ac = v2ActionColor(e.actionColor);
+  return (
+    <div style={{ padding: "12px 14px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10 }}>
+
+      {/* Regime + Permissions */}
+      <Card title="Market Regime">
+        <div style={{ textAlign: "center", marginBottom: 12 }}>
+          <div style={{ fontFamily: F.m, fontSize: 22, fontWeight: 900, color: rc, marginBottom: 4 }}>{e.regimeLabel}</div>
+          <div style={{ fontFamily: F.m, fontSize: 13, color: C.t3 }}>Confidence: <span style={{ color: rc }}>{e.confidencePct.toFixed(0)}%</span></div>
+        </div>
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 12 }}>
+          <div style={{ flex: 1, background: e.buyStatus === "enabled" ? `${C.bu}15` : `${C.be}10`, borderRadius: 6, padding: "8px 10px", border: `1px solid ${e.buyStatus === "enabled" ? C.bu : C.be}44`, textAlign: "center" }}>
+            <div style={{ fontFamily: F.m, fontSize: 10, color: C.t3, marginBottom: 3 }}>BUY</div>
+            <div style={{ fontFamily: F.m, fontSize: 18, fontWeight: 900, color: e.buyStatus === "enabled" ? C.bu : C.be }}>{e.buyStatus === "enabled" ? "✓" : "✗"}</div>
+            {e.buyBlockReasons.slice(0, 2).map((r, i) => <div key={i} style={{ fontFamily: F.s, fontSize: 10, color: C.be, marginTop: 2, lineHeight: 1.3 }}>{r}</div>)}
+          </div>
+          <div style={{ flex: 1, background: e.sellStatus === "enabled" ? `${C.bu}15` : `${C.be}10`, borderRadius: 6, padding: "8px 10px", border: `1px solid ${e.sellStatus === "enabled" ? C.bu : C.be}44`, textAlign: "center" }}>
+            <div style={{ fontFamily: F.m, fontSize: 10, color: C.t3, marginBottom: 3 }}>SELL</div>
+            <div style={{ fontFamily: F.m, fontSize: 18, fontWeight: 900, color: e.sellStatus === "enabled" ? C.bu : C.be }}>{e.sellStatus === "enabled" ? "✓" : "✗"}</div>
+            {e.sellBlockReasons.slice(0, 2).map((r, i) => <div key={i} style={{ fontFamily: F.s, fontSize: 10, color: C.be, marginTop: 2, lineHeight: 1.3 }}>{r}</div>)}
+          </div>
+        </div>
+        <div style={{ padding: "10px", background: `${ac}10`, borderRadius: 6, border: `1px solid ${ac}33`, textAlign: "center", marginBottom: 10 }}>
+          <div style={{ fontFamily: F.m, fontSize: 15, fontWeight: 900, color: ac }}>{e.actionLabel}</div>
+          {e.actionReasons.slice(0, 3).map((r, i) => <div key={i} style={{ fontFamily: F.s, fontSize: 11, color: C.t2, marginTop: 3 }}>{r}</div>)}
+        </div>
+        {v2.regime.reasons.slice(0, 3).map((r, i) => (
+          <div key={i} style={{ fontFamily: F.s, fontSize: 11, color: C.t3, padding: "2px 0", borderBottom: `1px solid ${C.bd}22` }}>→ {r}</div>
+        ))}
+      </Card>
+
+      {/* Spread Safety */}
+      <Card title="Spread Gate">
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <Dot ok={e.spreadSafe} />
+            <span style={{ fontFamily: F.m, fontSize: 14, fontWeight: 700, color: e.spreadSafe ? C.bu : C.be }}>{e.spreadLabel}</span>
+          </div>
+          {e.cooldownActive && (
+            <div style={{ padding: "5px 8px", background: `${C.wa}15`, border: `1px solid ${C.wa}33`, borderRadius: 4, marginBottom: 8 }}>
+              <span style={{ fontFamily: F.m, fontSize: 11, color: C.wa }}>Cooldown: {e.cooldownBarsLeft} bars remaining</span>
+            </div>
+          )}
+        </div>
+        <DR l="Spread" v={`${e.spreadDetails.spread.toFixed(0)}pts`} c={e.spreadSafe ? C.bu : C.be} />
+        <DR l="ATR" v={`${e.spreadDetails.atr.toFixed(1)}pts`} c={C.t2} />
+        <DR l="Spread/ATR" v={`${e.spreadDetails.ratio.toFixed(1)}%`} c={e.spreadDetails.ratio > 15 ? C.be : C.bu} />
+        <DR l="Regime" v={e.spreadDetails.label.toUpperCase()} c={e.spreadDetails.label === "spike" ? C.be : e.spreadDetails.label === "wide" ? C.wa : C.bu} />
+        {v2.spreadGate.blockReasons.map((r, i) => (
+          <div key={i} style={{ fontFamily: F.s, fontSize: 11, color: C.be, padding: "3px 0", marginTop: 2 }}>✗ {r}</div>
+        ))}
+      </Card>
+
+      {/* Structure Panel */}
+      <Card title="Structure Engine">
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+          <Bdg t={`M5: ${v2.structure.m5Trend.toUpperCase()}`} c={v2.structure.m5Trend === "bullish" ? C.bu : v2.structure.m5Trend === "bearish" ? C.be : C.nu} sz="sm" />
+          <Bdg t={`M15: ${v2.structure.m15Trend.toUpperCase()}`} c={v2.structure.m15Trend === "bullish" ? C.bu : v2.structure.m15Trend === "bearish" ? C.be : C.nu} sz="sm" />
+          <Bdg t={`H1: ${v2.structure.h1Bias.toUpperCase()}`} c={v2.structure.h1Bias === "bullish" ? C.bu : v2.structure.h1Bias === "bearish" ? C.be : C.nu} sz="sm" />
+        </div>
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 10 }}>
+          {e.structureFlags.bosUp && <Bdg t="BOS UP" c={C.bu} />}
+          {e.structureFlags.bosDown && <Bdg t="BOS DOWN" c={C.be} />}
+          {e.structureFlags.chochUp && <Bdg t="CHoCH UP" c={C.bb} />}
+          {e.structureFlags.chochDown && <Bdg t="CHoCH DOWN" c={C.br} />}
+          {e.structureFlags.bullishSweep && <Bdg t="SWEEP LOW ↑" c={C.bu} />}
+          {e.structureFlags.bearishSweep && <Bdg t="SWEEP HIGH ↓" c={C.be} />}
+        </div>
+        <DR l="Confidence" v={`${v2.structure.structureConfidence.toFixed(0)}%`} c={v2.structure.structureConfidence > 70 ? C.bu : v2.structure.structureConfidence > 50 ? C.wa : C.be} />
+        {v2.structure.lastSwingHigh && <DR l="Last Swing H" v={v2.structure.lastSwingHigh.toFixed(2)} c={C.be} />}
+        {v2.structure.lastSwingLow && <DR l="Last Swing L" v={v2.structure.lastSwingLow.toFixed(2)} c={C.bu} />}
+        <div style={{ marginTop: 8 }}>
+          {e.structureNotes.slice(0, 4).map((n, i) => (
+            <div key={i} style={{ fontFamily: F.s, fontSize: 11, color: C.t2, padding: "2px 0" }}>• {n}</div>
+          ))}
+        </div>
+      </Card>
+
+      {/* Indicator Matrix */}
+      <Card title="Indicator Matrix">
+        <FBar label="Overall Bias" score={v2.indicatorMatrix.overallBias} />
+        <FBar label="Trend" score={v2.indicatorMatrix.trendScore} />
+        <FBar label="Momentum" score={v2.indicatorMatrix.momentumScore} />
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+            <span style={{ fontFamily: F.s, fontSize: 13, color: C.t2 }}>Volatility</span>
+            <span style={{ fontFamily: F.m, fontSize: 13, fontWeight: 600, color: C.t2 }}>{v2.indicatorMatrix.volatilityScore.toFixed(0)}/100</span>
+          </div>
+          <div style={{ height: 6, background: C.bd, borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ width: `${v2.indicatorMatrix.volatilityScore}%`, height: "100%", background: `linear-gradient(90deg, ${C.wa}66, ${C.wa})`, borderRadius: 3, transition: "width 0.5s" }} />
+          </div>
+        </div>
+        <FBar label="Participation/Value" score={v2.indicatorMatrix.participationScore} />
+        {v2.indicatorMatrix.divergenceWarnings.length > 0 && (
+          <div style={{ marginTop: 8, padding: "6px 8px", background: `${C.wa}10`, borderRadius: 4, border: `1px solid ${C.wa}22` }}>
+            <div style={{ fontFamily: F.m, fontSize: 10, color: C.wa, marginBottom: 4 }}>DIVERGENCE WARNINGS</div>
+            {v2.indicatorMatrix.divergenceWarnings.map((w, i) => (
+              <div key={i} style={{ fontFamily: F.s, fontSize: 11, color: C.wa }}>⚠ {w}</div>
+            ))}
+          </div>
+        )}
+        {v2.indicatorMatrix.summary.slice(0, 4).map((s, i) => (
+          <div key={i} style={{ fontFamily: F.s, fontSize: 11, color: C.t3, padding: "2px 0" }}>{s}</div>
+        ))}
+      </Card>
+
+      {/* Risk Governor */}
+      <Card title="Risk Governor">
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+          {v2.riskGovernor.wrongSideFreeze && <Bdg t="WRONG-SIDE FREEZE" c={C.wa} sz="md" />}
+          {v2.riskGovernor.dailyLossLock && <Bdg t="DAILY LOSS LOCK" c={C.be} sz="md" />}
+          {v2.riskGovernor.maxExposureReached && <Bdg t="MAX EXPOSURE" c={C.wa} sz="md" />}
+          {v2.riskGovernor.blockAllEntries && <Bdg t="ALL ENTRIES BLOCKED" c={C.be} sz="md" />}
+        </div>
+        <DR l="Open Buys" v={String(v2.riskGovernor.openBuys)} c={v2.riskGovernor.openBuys > 0 ? C.bu : C.t3} />
+        <DR l="Open Sells" v={String(v2.riskGovernor.openSells)} c={v2.riskGovernor.openSells > 0 ? C.be : C.t3} />
+        <DR l="Buy Direction" v={v2.riskGovernor.blockBuy ? "BLOCKED" : "ALLOWED"} c={v2.riskGovernor.blockBuy ? C.be : C.bu} />
+        <DR l="Sell Direction" v={v2.riskGovernor.blockSell ? "BLOCKED" : "ALLOWED"} c={v2.riskGovernor.blockSell ? C.be : C.bu} />
+        {v2.riskGovernor.reasons.slice(0, 4).map((r, i) => (
+          <div key={i} style={{ fontFamily: F.s, fontSize: 11, color: v2.riskGovernor.blockAllEntries ? C.be : C.wa, padding: "2px 0", borderBottom: `1px solid ${C.bd}22` }}>→ {r}</div>
+        ))}
+      </Card>
+
+      {/* Data Integrity */}
+      <Card title="Data Integrity">
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          <Dot ok={e.dataIntegrityOk} />
+          <span style={{ fontFamily: F.m, fontSize: 13, fontWeight: 700, color: e.dataIntegrityOk ? C.bu : C.be }}>{e.dataIntegrityOk ? "Feed Healthy" : "Feed Issues"}</span>
+        </div>
+        <DR l="Quality Score" v={`${v2.regime.confidence.toFixed(0)}%`} c={v2.regime.confidence > 70 ? C.bu : v2.regime.confidence > 40 ? C.wa : C.be} />
+        <DR l="Spread Present" v={v2.spreadGate.spreadPoints > 0 ? "Yes" : "No"} c={v2.spreadGate.spreadPoints > 0 ? C.bu : C.be} />
+        <DR l="MTF Structure" v={`M5:${v2.structure.m5Trend[0].toUpperCase()} M15:${v2.structure.m15Trend[0].toUpperCase()} H1:${v2.structure.h1Bias[0].toUpperCase()}`} c={C.t2} />
+        {e.dataIntegrityIssues.slice(0, 4).map((issue, i) => (
+          <div key={i} style={{ fontFamily: F.s, fontSize: 11, color: C.be, padding: "2px 0" }}>✗ {issue}</div>
+        ))}
+        {v2.tradePermission.warnings.slice(0, 3).map((w, i) => (
+          <div key={i} style={{ fontFamily: F.s, fontSize: 11, color: C.wa, padding: "2px 0" }}>⚠ {w}</div>
+        ))}
+      </Card>
     </div>
   );
 }
@@ -1073,7 +1269,7 @@ export default function PhundDashboard() {
   const [err, setErr] = useState<string | null>(null);
   const [cd, setCd] = useState(10);
   const [tgR, setTgR] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"phund"|"gold_logic"|"spectre">("phund");
+  const [activeTab, setActiveTab] = useState<"phund"|"gold_logic"|"spectre"|"gold_v2">("phund");
   const [spectreData, setSpectreData] = useState<SpectreOutput|null>(null);
   const [goldLogicData, setGoldLogicData] = useState<GoldLogicSnapshot|null>(null);
 
@@ -1207,11 +1403,15 @@ export default function PhundDashboard() {
 
       {/* TAB NAV */}
       <div style={{ background: C.cd, borderBottom: `1px solid ${C.bd}`, padding: "0 16px", display: "flex", gap: 0 }}>
-        {(["phund","gold_logic","spectre"] as const).map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)} style={{ background: "none", border: "none", borderBottom: activeTab === tab ? `2px solid ${tab === "spectre" ? C.pu : tab === "gold_logic" ? "#fbbf24" : C.ac}` : "2px solid transparent", padding: "8px 18px", cursor: "pointer", fontFamily: F.m, fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: activeTab === tab ? (tab === "spectre" ? C.pu : tab === "gold_logic" ? "#fbbf24" : C.ac) : C.t3, textTransform: "uppercase", transition: "all 0.2s" }}>
-            {tab === "phund" ? "OVERVIEW" : tab === "gold_logic" ? "GOLD V2" : "SPECTRE"}
-          </button>
-        ))}
+        {(["phund","gold_v2","gold_logic","spectre"] as const).map(tab => {
+          const tabColor = tab === "spectre" ? C.pu : tab === "gold_logic" ? "#fbbf24" : tab === "gold_v2" ? C.bu : C.ac;
+          const tabLabel = tab === "phund" ? "OVERVIEW" : tab === "gold_v2" ? "V2 ENGINE" : tab === "gold_logic" ? "GOLD LOGIC" : "SPECTRE";
+          return (
+            <button key={tab} onClick={() => setActiveTab(tab)} style={{ background: "none", border: "none", borderBottom: activeTab === tab ? `2px solid ${tabColor}` : "2px solid transparent", padding: "8px 18px", cursor: "pointer", fontFamily: F.m, fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: activeTab === tab ? tabColor : C.t3, textTransform: "uppercase", transition: "all 0.2s" }}>
+              {tabLabel}
+            </button>
+          );
+        })}
         {goldLogicData && activeTab === "gold_logic" && (
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontFamily: F.m, fontSize: 9, color: C.t3 }}>MASTER BIAS</span>
@@ -1235,6 +1435,8 @@ export default function PhundDashboard() {
       )}
       {/* CONSENSUS BANNER */}
       {data?.consensus && <ConsensusBanner consensus={data.consensus} />}
+      {/* V2 STATUS BANNER */}
+      {data?.gold_v2 && <GoldV2Banner v2={data.gold_v2} />}
 
       {!h?.mt5_connected && (
         <div style={{ background: `${C.ac}10`, borderBottom: `1px solid ${C.ac}33`, padding: "8px 16px", fontFamily: F.s, fontSize: 12, color: C.ac }}>
@@ -1456,6 +1658,16 @@ export default function PhundDashboard() {
 
       </div>}
 
+      {activeTab === "gold_v2" && data?.gold_v2 && (
+        <GoldV2Panel v2={data.gold_v2} />
+      )}
+      {activeTab === "gold_v2" && !data?.gold_v2 && (
+        <div style={{ padding: 40, textAlign: "center", fontFamily: F.m, fontSize: 13, color: C.t3 }}>
+          <div style={{ marginBottom: 12, fontSize: 15, color: C.t2 }}>V2 Engine — Awaiting first MT5 data payload</div>
+          <div style={{ fontSize: 11, color: C.t3 }}>The V2 pipeline runs automatically on each MT5 market update.</div>
+        </div>
+      )}
+
       {activeTab === "gold_logic" && goldLogicData && (
         <GoldLogicTab data={goldLogicData} />
       )}
@@ -1471,7 +1683,7 @@ export default function PhundDashboard() {
       )}
 
       <footer style={{ padding: "10px 16px", borderTop: `1px solid ${C.bd}`, display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
-        <span style={{ fontFamily: F.m, fontSize: 9, color: C.t3 }}>Gold Dashboard V2 — Gold Logic AI Engine — 30 Indicators — Real-time</span>
+        <span style={{ fontFamily: F.m, fontSize: 9, color: C.t3 }}>Gold Dashboard V2.1 — V2 Structure/Regime/Spread Engine — 30 Indicators — Real-time</span>
         <span style={{ fontFamily: F.m, fontSize: 9, color: C.t3 }}>Scans: {scans.length} | Alerts: {alerts.length} | Positions: {positions.length} | Poll: 10s</span>
       </footer>
     </div>

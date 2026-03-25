@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getRecentSignals, getRecentAlerts, getRecentTrades, getOpenTrades, getMarket, getHeartbeat, getAccount, getRiskConfig, getRecentAudit as getAuditDB, getDiagCounters } from "@/lib/store";
+import { getRecentSignals, getRecentAlerts, getRecentTrades, getOpenTrades, getMarket, getHeartbeat, getAccount, getRiskConfig, getRecentAudit as getAuditDB, getDiagCounters, getV2State } from "@/lib/store";
 import { DEFAULT_RISK_CONFIG } from "@/lib/trade-engine";
 import { getRecentAudit } from "@/lib/diagnostics";
 import { validateFeed } from "@/lib/diagnostics";
@@ -13,10 +13,10 @@ export const revalidate = 0;
 
 export async function GET() {
   try {
-    const [signals, alerts, allTrades, openTrades, mkt, hb, acct, riskCfg, auditDB, counters] = await Promise.all([
+    const [signals, alerts, allTrades, openTrades, mkt, hb, acct, riskCfg, auditDB, counters, v2State] = await Promise.all([
       getRecentSignals(50), getRecentAlerts(30), getRecentTrades(50), getOpenTrades(),
       getMarket("XAUUSD"), getHeartbeat("ox_primary"), getAccount("ox_demo").then(a => a || getAccount("ox_main")),
-      getRiskConfig(), getAuditDB(20), getDiagCounters(),
+      getRiskConfig(), getAuditDB(20), getDiagCounters(), getV2State("XAUUSD"),
     ]);
 
     const latest = signals.length > 0 ? signals[0] : null;
@@ -115,7 +115,8 @@ export async function GET() {
       gold_logic: goldLogic,
       spectre: spectre,
       consensus: consensus,
-      version: "2.0.0",
+      gold_v2: v2State,
+      version: "2.1.0",
     });
   } catch (e: any) {
     console.error("Dashboard err:", e);
