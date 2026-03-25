@@ -61,17 +61,37 @@ export function sma(data: number[], period: number): number {
 
 /**
  * Relative Strength Index (RSI)
+ * Uses Wilder's Smoothed Moving Average (RMA/SMMA) — matches MT5/TradingView.
+ * Seed: SMA of first `period` changes; then RMA: avgGain = (prev*(n-1) + gain) / n
  */
 export function rsi(closes: number[], period = 14): number {
   if (closes.length < period + 1) return 50;
-  let gains = 0, losses = 0;
-  for (let i = closes.length - period; i < closes.length; i++) {
-    const delta = closes[i] - closes[i - 1];
-    if (delta > 0) gains += delta;
-    else losses -= delta;
+
+  // Build delta array
+  const deltas: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    deltas.push(closes[i] - closes[i - 1]);
   }
-  if (losses === 0) return 100;
-  const rs = (gains / period) / (losses / period);
+
+  // Seed: first avgGain / avgLoss = SMA of first `period` deltas
+  let avgGain = 0, avgLoss = 0;
+  for (let i = 0; i < period; i++) {
+    if (deltas[i] > 0) avgGain += deltas[i];
+    else avgLoss -= deltas[i];
+  }
+  avgGain /= period;
+  avgLoss /= period;
+
+  // Wilder RMA for remaining deltas
+  for (let i = period; i < deltas.length; i++) {
+    const gain = deltas[i] > 0 ? deltas[i] : 0;
+    const loss = deltas[i] < 0 ? -deltas[i] : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
   return 100 - 100 / (1 + rs);
 }
 
@@ -103,7 +123,8 @@ export function stochastic(highs: number[], lows: number[], closes: number[], kP
     kValues.push(highest === lowest ? 50 : ((closes[i] - lowest) / (highest - lowest)) * 100);
   }
   const k = kValues[kValues.length - 1];
-  const d = kValues.slice(-dPeriod).reduce((a, b) => a + b, 0) / dPeriod;
+  const dSlice = kValues.slice(-dPeriod);
+  const d = dSlice.reduce((a, b) => a + b, 0) / dSlice.length; // divide by actual count, not dPeriod
   return { k, d };
 }
 
@@ -277,6 +298,12 @@ export function donchianChannels(highs: number[], lows: number[], period = 20): 
 
 /**
  * Average Directional Index (ADX)
+ * Uses Wilder's Smoothed Moving Average (RMA) for +DM, -DM, TR smoothing,
+ * and applies a second RMA pass to convert DX into ADX — matches MT5/TradingView.
+ *
+ * Fixed from previous version which:
+ *   (a) used standard EMA (k=2/(n+1)) instead of Wilder RMA (alpha=1/n)
+ *   (b) returned raw DX directly instead of smoothing DX into ADX
  */
 export function adx(highs: number[], lows: number[], closes: number[], period = 14): {
   adx: number;
@@ -284,51 +311,118 @@ export function adx(highs: number[], lows: number[], closes: number[], period = 
   minusDI: number;
 } {
   if (highs.length < period + 2) return { adx: 20, plusDI: 25, minusDI: 25 };
-  const plusDM: number[] = [];
-  const minusDM: number[] = [];
-  const tr: number[] = [];
+
+  // Build raw +DM, -DM, TR arrays
+  const plusDMRaw: number[] = [];
+  const minusDMRaw: number[] = [];
+  const trRaw: number[] = [];
 
   for (let i = 1; i < highs.length; i++) {
     const upMove = highs[i] - highs[i - 1];
     const downMove = lows[i - 1] - lows[i];
-    plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0);
-    minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
-    tr.push(Math.max(
+    plusDMRaw.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDMRaw.push(downMove > upMove && downMove > 0 ? downMove : 0);
+    trRaw.push(Math.max(
       highs[i] - lows[i],
       Math.abs(highs[i] - closes[i - 1]),
       Math.abs(lows[i] - closes[i - 1])
     ));
   }
 
-  const smoothTR = ema(tr, period);
-  const smoothPlusDM = ema(plusDM, period);
-  const smoothMinusDM = ema(minusDM, period);
-  const L = smoothTR.length - 1;
+  if (trRaw.length < period) return { adx: 20, plusDI: 25, minusDI: 25 };
 
+  // Wilder RMA: seed = SMA of first `period` values, then (prev*(n-1) + x) / n
+  const wilderRMA = (arr: number[]): number[] => {
+    const result: number[] = [];
+    let val = arr.slice(0, period).reduce((a, b) => a + b, 0) / period;
+    result.push(val);
+    for (let i = period; i < arr.length; i++) {
+      val = (val * (period - 1) + arr[i]) / period;
+      result.push(val);
+    }
+    return result;
+  };
+
+  const smoothTR = wilderRMA(trRaw);
+  const smoothPlusDM = wilderRMA(plusDMRaw);
+  const smoothMinusDM = wilderRMA(minusDMRaw);
+
+  // Compute DX series from smoothed DI values
+  const dxArr: number[] = [];
+  for (let i = 0; i < smoothTR.length; i++) {
+    const pDI = smoothTR[i] > 0 ? (smoothPlusDM[i] / smoothTR[i]) * 100 : 0;
+    const mDI = smoothTR[i] > 0 ? (smoothMinusDM[i] / smoothTR[i]) * 100 : 0;
+    dxArr.push(pDI + mDI > 0 ? Math.abs(pDI - mDI) / (pDI + mDI) * 100 : 0);
+  }
+
+  // Second Wilder pass: smooth DX → ADX
+  const adxArr = wilderRMA(dxArr);
+
+  // Final values at last bar
+  const L = smoothTR.length - 1;
   const plusDI = smoothTR[L] > 0 ? (smoothPlusDM[L] / smoothTR[L]) * 100 : 0;
   const minusDI = smoothTR[L] > 0 ? (smoothMinusDM[L] / smoothTR[L]) * 100 : 0;
-  const dx = plusDI + minusDI > 0 ? Math.abs(plusDI - minusDI) / (plusDI + minusDI) * 100 : 0;
+  const adxVal = adxArr.length > 0 ? adxArr[adxArr.length - 1] : 20;
 
-  return { adx: clamp(dx, 0, 100), plusDI, minusDI };
+  return { adx: clamp(adxVal, 0, 100), plusDI, minusDI };
 }
 
 /**
  * SuperTrend
+ * Iterative implementation with band-locking logic — matches MT5/TradingView.
+ * Bands only flip when price closes on the opposite side; they do NOT reset every bar.
+ *
+ * Fixed from previous version which computed a single-bar band without history,
+ * causing noisy direction flips on any intra-bar noise.
  */
 export function supertrend(highs: number[], lows: number[], closes: number[], period = 10, mult = 3): {
   value: number;
   direction: number;
 } {
   if (closes.length < period + 1) return { value: closes[closes.length - 1] || 0, direction: 0 };
-  const atrVal = atr(highs, lows, closes, period);
-  const hl2 = (highs[highs.length - 1] + lows[lows.length - 1]) / 2;
-  const upperBand = hl2 + mult * atrVal;
-  const lowerBand = hl2 - mult * atrVal;
-  const price = closes[closes.length - 1];
-  return {
-    value: price > lowerBand ? lowerBand : upperBand,
-    direction: price > lowerBand ? 1 : -1
-  };
+
+  // Iterate from the beginning, carrying forward band state
+  let upperBand = 0;
+  let lowerBand = 0;
+  let prevUpperBand = 0;
+  let prevLowerBand = 0;
+  let direction = 1; // 1 = bullish, -1 = bearish
+  let supertrendVal = 0;
+
+  for (let i = period; i < closes.length; i++) {
+    // ATR at bar i using history up to i
+    const atrVal = atr(highs.slice(0, i + 1), lows.slice(0, i + 1), closes.slice(0, i + 1), period);
+    const hl2 = (highs[i] + lows[i]) / 2;
+
+    const rawUpper = hl2 + mult * atrVal;
+    const rawLower = hl2 - mult * atrVal;
+
+    // Band-locking: only tighten, never widen in the same direction
+    upperBand = (rawUpper < prevUpperBand || closes[i - 1] > prevUpperBand) ? rawUpper : prevUpperBand;
+    lowerBand = (rawLower > prevLowerBand || closes[i - 1] < prevLowerBand) ? rawLower : prevLowerBand;
+
+    // Direction flip logic
+    if (direction === 1) {
+      if (closes[i] < lowerBand) {
+        direction = -1;
+        supertrendVal = upperBand;
+      } else {
+        supertrendVal = lowerBand;
+      }
+    } else {
+      if (closes[i] > upperBand) {
+        direction = 1;
+        supertrendVal = lowerBand;
+      } else {
+        supertrendVal = upperBand;
+      }
+    }
+
+    prevUpperBand = upperBand;
+    prevLowerBand = lowerBand;
+  }
+
+  return { value: supertrendVal, direction };
 }
 
 /**

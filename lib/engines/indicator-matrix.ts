@@ -86,10 +86,11 @@ function scoreMomentum(bars: Bar[]): number {
   // Stochastic (20pts)
   if (bars.length >= 14) {
     const stoch = stochastic(highs, lows, closes, 14, 3);
-    if (stoch.k > 80) score -= 15;
-    else if (stoch.k > 60) score += 20;
-    else if (stoch.k < 20) score += 15;
-    else if (stoch.k < 40) score -= 20;
+    if (stoch.k > 80) score -= 20;       // Overbought — strongest negative signal
+    else if (stoch.k > 60) score += 20;  // Bullish momentum zone
+    else if (stoch.k < 20) score += 15;  // Oversold — potential bullish reversal
+    else if (stoch.k < 40) score -= 15;  // Bearish zone — weaker penalty than overbought
+    // 40–60: neutral, no score contribution
   }
 
   // CCI (15pts)
