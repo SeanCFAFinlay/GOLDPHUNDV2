@@ -7,7 +7,8 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { runSignalEngine } from "@/lib/signal-engine";
 import { sendTelegram, formatAlert, shouldFireAlert, makeAlertRecord } from "@/lib/telegram";
-import { evaluateTradeDecision, executePaperTrade, buildTradeInstruction, updatePaperTrades, DEFAULT_RISK_CONFIG, type AccountSnapshot } from "@/lib/trade-engine";
+import { evaluateTradeDecision, executePaperTrade, buildTradeInstruction, updatePaperTrades, DEFAULT_RISK_CONFIG, type AccountSnapshot, type PaperTradeUpdateResult } from "@/lib/trade-engine";
+import { updateTrade } from "@/lib/store";
 import { validateMarketPayload, validateFeed, incPayloads, incRejected, audit, slog } from "@/lib/diagnostics";
 import { saveSignal, saveAlert, saveMarket, saveTrade, getAlertState, setAlertState, getRiskConfig, getOpenTrades, getAccount, addPendingInstruction, incDiagCounter, saveAuditEntry } from "@/lib/store";
 import { env } from "@/lib/config/env";
@@ -156,12 +157,28 @@ export async function POST(req: NextRequest) {
 
     // --- Update paper trades P&L ---
     if (openTrades.length > 0) {
-      const updated = updatePaperTrades(openTrades, p.bid);
-      for (const t of updated) {
-        if (t.status !== "filled") { // Status changed (SL/TP hit)
-          // Already saved via updateTrade would be ideal but saveTrade suffices for now
-          const a = audit("paper_close", "system", `${t.close_reason} P&L: ${t.profit?.toFixed(2)}`, { order_id: t.order_id });
-          await saveAuditEntry(a);
+      const updateResult: PaperTradeUpdateResult = updatePaperTrades(openTrades, p.bid, p.ask);
+
+      // Persist ALL updated trades (P&L changes)
+      for (const t of updateResult.trades) {
+        if (t.mode === "paper") {
+          await updateTrade(t.order_id, t);
+        }
+      }
+
+      // Log status changes (SL/TP hits)
+      for (const t of updateResult.changed) {
+        const a = audit("paper_close", "system", `${t.close_reason} @ ${t.exit_price} | P&L: $${t.profit?.toFixed(2)}`, { order_id: t.order_id, direction: t.direction });
+        await saveAuditEntry(a);
+
+        // Send Telegram notification for paper trade closure
+        if (env.hasTelegram) {
+          const emoji = (t.profit || 0) >= 0 ? "🟢" : "🔴";
+          await sendTelegram(env.telegramBotToken, env.telegramChatId,
+            `${emoji} *PAPER TRADE CLOSED*\n${t.direction.toUpperCase()} ${t.volume} ${sym}\n` +
+            `Entry: ${t.entry_price} → Exit: ${t.exit_price}\n` +
+            `${t.close_reason} | P&L: $${(t.profit || 0) >= 0 ? '+' : ''}${t.profit?.toFixed(2)}`
+          );
         }
       }
     }

@@ -282,7 +282,7 @@ describe("Trade Decision Engine", () => {
 
       const updated = updatePaperTrades(trades, 2005);
 
-      expect(updated[0].profit).toBe(50); // (2005 - 2000) * 0.1 * 100
+      expect(updated.trades[0].profit).toBe(50); // (2005 - 2000) * 0.1 * 100
     });
 
     it("should trigger SL for buy trade", () => {
@@ -309,8 +309,8 @@ describe("Trade Decision Engine", () => {
 
       const updated = updatePaperTrades(trades, 1990);
 
-      expect(updated[0].status).toBe("sl_hit");
-      expect(updated[0].close_reason).toBe("SL hit");
+      expect(updated.trades[0].status).toBe("sl_hit");
+      expect(updated.trades[0].close_reason).toBe("Stop Loss");
     });
 
     it("should trigger TP for buy trade", () => {
@@ -337,8 +337,8 @@ describe("Trade Decision Engine", () => {
 
       const updated = updatePaperTrades(trades, 2015);
 
-      expect(updated[0].status).toBe("tp_hit");
-      expect(updated[0].close_reason).toBe("TP hit");
+      expect(updated.trades[0].status).toBe("tp_hit");
+      expect(updated.trades[0].close_reason).toBe("Take Profit");
     });
 
     it("should not modify non-paper trades", () => {
@@ -365,7 +365,7 @@ describe("Trade Decision Engine", () => {
 
       const updated = updatePaperTrades(trades, 2015);
 
-      expect(updated[0].status).toBe("filled");
+      expect(updated.trades[0].status).toBe("filled");
     });
   });
 });

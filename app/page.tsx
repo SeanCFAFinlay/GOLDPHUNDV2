@@ -200,7 +200,7 @@ function SRLadder({ signal }: { signal: Sig }) {
   );
 }
 
-function TradePanel({ signal, account, onTrade }: { signal: Sig | null; account: Acct | null; onTrade: (action: string, dir?: string, vol?: number, sl?: number, tp?: number, ticket?: number) => Promise<any> }) {
+function TradePanel({ signal, account, tradeMode, onTrade }: { signal: Sig | null; account: Acct | null; tradeMode: string; onTrade: (action: string, dir?: string, vol?: number, sl?: number, tp?: number, ticket?: number, orderId?: string) => Promise<any> }) {
   const [lot, setLot] = useState(0.10);
   const [customLot, setCustomLot] = useState("");
   const [useSig, setUseSig] = useState(true);
@@ -208,22 +208,72 @@ function TradePanel({ signal, account, onTrade }: { signal: Sig | null; account:
   const [manTp, setManTp] = useState("");
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [rrRatio, setRrRatio] = useState(2); // Configurable R:R
 
   const activeLot = customLot ? parseFloat(customLot) || lot : lot;
-  const sigSl = signal?.invalidation;
-  const slDist = signal ? Math.abs(signal.price - signal.invalidation) : 0;
-  const sigTp = signal ? (signal.price > signal.invalidation ? signal.price + slDist * 4 : signal.price - slDist * 4) : undefined;
-  const finalSl = useSig ? sigSl : (manSl ? parseFloat(manSl) : undefined);
-  const finalTp = useSig ? sigTp : (manTp ? parseFloat(manTp) : undefined);
+  const bid = signal?.bid || 0;
+  const ask = signal?.ask || bid + 3;
+  const atr = signal?.factors?.volatility?.metadata?.atr || 3;
+
+  // Spread-aware entry prices
+  const buyEntry = ask;
+  const sellEntry = bid;
+
+  // Signal-based SL (use invalidation if valid)
+  const sigInvalidation = signal?.invalidation || 0;
+  const useSigInvalidation = sigInvalidation > 0 && Math.abs(signal?.price || 0 - sigInvalidation) < atr * 4;
+
+  // Calculate SL/TP for both directions
+  const getBuySl = () => {
+    if (!useSig && manSl) return parseFloat(manSl);
+    if (useSigInvalidation && sigInvalidation < buyEntry) return sigInvalidation;
+    return +(buyEntry - atr * 1.5).toFixed(2);
+  };
+  const getSellSl = () => {
+    if (!useSig && manSl) return parseFloat(manSl);
+    if (useSigInvalidation && sigInvalidation > sellEntry) return sigInvalidation;
+    return +(sellEntry + atr * 1.5).toFixed(2);
+  };
+
+  const buySl = getBuySl();
+  const sellSl = getSellSl();
+  const buySlDist = Math.abs(buyEntry - buySl);
+  const sellSlDist = Math.abs(sellEntry - sellSl);
+
+  const getBuyTp = () => {
+    if (!useSig && manTp) return parseFloat(manTp);
+    return +(buyEntry + buySlDist * rrRatio).toFixed(2);
+  };
+  const getSellTp = () => {
+    if (!useSig && manTp) return parseFloat(manTp);
+    return +(sellEntry - sellSlDist * rrRatio).toFixed(2);
+  };
+
+  const buyTp = getBuyTp();
+  const sellTp = getSellTp();
+
+  // Risk calculations
+  const balance = account?.balance || 10000;
+  const buyRisk = buySlDist * activeLot * 100;
+  const sellRisk = sellSlDist * activeLot * 100;
+  const buyRiskPct = (buyRisk / balance) * 100;
+  const sellRiskPct = (sellRisk / balance) * 100;
+  const buyReward = buySlDist * rrRatio * activeLot * 100;
+  const sellReward = sellSlDist * rrRatio * activeLot * 100;
+
+  // Determine signal direction
   const dir = signal?.state.includes("bull") || signal?.state.includes("long") || signal?.state === "breakout_watch_up" ? "buy" :
     signal?.state.includes("bear") || signal?.state.includes("short") || signal?.state === "breakout_watch_down" ? "sell" : null;
 
   const exec = async (direction: string) => {
     if (loading) return;
     setLoading(true); setStatus(null);
+    const sl = direction === "buy" ? buySl : sellSl;
+    const tp = direction === "buy" ? buyTp : sellTp;
     try {
-      const r = await onTrade("open", direction, activeLot, finalSl, finalTp);
-      setStatus({ ok: r?.ok, msg: r?.ok ? `✓ ${direction.toUpperCase()} ${activeLot} lot queued — ${r.order_id}` : `✗ ${r?.error || "Failed"}` });
+      const r = await onTrade("open", direction, activeLot, sl, tp);
+      const modeLabel = r?.mode === "paper" ? "📝 PAPER" : "🔴 LIVE";
+      setStatus({ ok: r?.ok, msg: r?.ok ? `✓ ${modeLabel} ${direction.toUpperCase()} ${activeLot} — ${r.order_id}` : `✗ ${r?.error || "Failed"}` });
     } catch (e: any) { setStatus({ ok: false, msg: `✗ ${e.message}` }); }
     setLoading(false);
   };
@@ -233,179 +283,358 @@ function TradePanel({ signal, account, onTrade }: { signal: Sig | null; account:
     setLoading(true); setStatus(null);
     try {
       const r = await onTrade("close_all");
-      setStatus({ ok: r?.ok, msg: r?.ok ? "✓ Close all queued" : `✗ ${r?.error}` });
+      setStatus({ ok: r?.ok, msg: r?.ok ? `✓ Closed ${r.paper_closed || 0} paper, live queued` : `✗ ${r?.error}` });
     } catch (e: any) { setStatus({ ok: false, msg: `✗ ${e.message}` }); }
     setLoading(false);
   };
 
   return (
     <div>
-      {/* Price display */}
+      {/* Trade Mode Indicator */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, padding: "6px 10px", background: tradeMode === "live" ? `${C.be}14` : `${C.ac}14`, borderRadius: 4, border: `1px solid ${tradeMode === "live" ? C.be : C.ac}33` }}>
+        <span style={{ fontFamily: F.m, fontSize: 11, color: C.t2 }}>MODE</span>
+        <Bdg t={tradeMode === "live" ? "🔴 LIVE" : tradeMode === "paper" ? "📝 PAPER" : tradeMode?.toUpperCase() || "—"} c={tradeMode === "live" ? C.be : C.ac} sz="md" />
+      </div>
+
+      {/* Price display with entry highlights */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div style={{ textAlign: "center", flex: 1 }}>
-          <div style={{ fontFamily: F.m, fontSize: 11, color: C.t3, marginBottom: 3 }}>BID</div>
-          <div style={{ fontFamily: F.m, fontSize: 22, fontWeight: 800, color: C.bu }}>{signal?.bid?.toFixed(2) || "—"}</div>
+          <div style={{ fontFamily: F.m, fontSize: 9, color: C.t3, marginBottom: 2 }}>SELL @ BID</div>
+          <div style={{ fontFamily: F.m, fontSize: 22, fontWeight: 800, color: C.be }}>{bid?.toFixed(2) || "—"}</div>
         </div>
-        <div style={{ width: 1, height: 40, background: C.bd }} />
+        <div style={{ width: 1, height: 45, background: C.bd }} />
         <div style={{ textAlign: "center", flex: 1 }}>
-          <div style={{ fontFamily: F.m, fontSize: 11, color: C.t3, marginBottom: 3 }}>ASK</div>
-          <div style={{ fontFamily: F.m, fontSize: 22, fontWeight: 800, color: C.be }}>{signal?.ask?.toFixed(2) || "—"}</div>
+          <div style={{ fontFamily: F.m, fontSize: 9, color: C.t3, marginBottom: 2 }}>BUY @ ASK</div>
+          <div style={{ fontFamily: F.m, fontSize: 22, fontWeight: 800, color: C.bu }}>{ask?.toFixed(2) || "—"}</div>
         </div>
-        <div style={{ width: 1, height: 40, background: C.bd }} />
-        <div style={{ textAlign: "center", flex: 1 }}>
-          <div style={{ fontFamily: F.m, fontSize: 11, color: C.t3, marginBottom: 3 }}>SPREAD</div>
-          <div style={{ fontFamily: F.m, fontSize: 16, fontWeight: 700, color: (signal?.spread || 0) > 30 ? C.wa : C.t2 }}>{signal?.spread?.toFixed(1) || "—"}</div>
+        <div style={{ width: 1, height: 45, background: C.bd }} />
+        <div style={{ textAlign: "center", flex: 0.6 }}>
+          <div style={{ fontFamily: F.m, fontSize: 9, color: C.t3, marginBottom: 2 }}>SPREAD</div>
+          <div style={{ fontFamily: F.m, fontSize: 14, fontWeight: 700, color: (signal?.spread || 0) > 30 ? C.wa : C.t2 }}>{signal?.spread?.toFixed(1) || "—"}</div>
         </div>
       </div>
 
       {/* Signal recommendation */}
       {signal && dir && (
-        <div style={{ padding: "7px 10px", background: `${stC(signal.state)}0d`, border: `1px solid ${stC(signal.state)}22`, borderRadius: 4, marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontFamily: F.s, fontSize: 12, color: stC(signal.state) }}>Signal: {sl(signal.state)}</span>
-          <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3 }}>Score: {signal.master_score > 0 ? "+" : ""}{signal.master_score.toFixed(1)}</span>
+        <div style={{ padding: "6px 10px", background: `${stC(signal.state)}0d`, border: `1px solid ${stC(signal.state)}22`, borderRadius: 4, marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontFamily: F.s, fontSize: 11, color: stC(signal.state) }}>Signal: {sl(signal.state)}</span>
+          <span style={{ fontFamily: F.m, fontSize: 11, color: C.t3 }}>Score: {signal.master_score > 0 ? "+" : ""}{signal.master_score.toFixed(1)} | Conf: {(signal.confidence_pct * 100).toFixed(0)}%</span>
         </div>
       )}
       {signal?.no_trade && (
-        <div style={{ padding: "7px 10px", background: `${C.wa}0d`, border: `1px solid ${C.wa}22`, borderRadius: 4, marginBottom: 10 }}>
-          <span style={{ fontFamily: F.s, fontSize: 12, color: C.wa }}>⊘ No Trade — {signal.no_trade_reason}</span>
+        <div style={{ padding: "6px 10px", background: `${C.wa}0d`, border: `1px solid ${C.wa}22`, borderRadius: 4, marginBottom: 10 }}>
+          <span style={{ fontFamily: F.s, fontSize: 11, color: C.wa }}>⊘ No Trade — {signal.no_trade_reason}</span>
         </div>
       )}
 
-      {/* Lot size */}
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontFamily: F.s, fontSize: 12, color: C.t3, marginBottom: 5 }}>Lot Size</div>
-        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-          {LOT_SIZES.map(l => (
-            <button key={l} onClick={() => { setLot(l); setCustomLot(""); }}
-              style={{ fontFamily: F.m, fontSize: 12, padding: "6px 10px", borderRadius: 4, border: `1px solid ${lot === l && !customLot ? C.ac : C.bd}`, background: lot === l && !customLot ? `${C.ac}1a` : "transparent", color: lot === l && !customLot ? C.ac : C.t2, cursor: "pointer" }}>
-              {l}
-            </button>
-          ))}
-          <input value={customLot} onChange={e => setCustomLot(e.target.value)} placeholder="custom"
-            style={{ fontFamily: F.m, fontSize: 12, width: 64, padding: "6px 8px", borderRadius: 4, border: `1px solid ${customLot ? C.ac : C.bd}`, background: C.bg, color: C.tx, outline: "none" }} />
+      {/* Lot size + R:R row */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+        <div style={{ flex: 2 }}>
+          <div style={{ fontFamily: F.s, fontSize: 11, color: C.t3, marginBottom: 4 }}>Lot Size</div>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {LOT_SIZES.map(l => (
+              <button key={l} onClick={() => { setLot(l); setCustomLot(""); }}
+                style={{ fontFamily: F.m, fontSize: 11, padding: "5px 8px", borderRadius: 3, border: `1px solid ${lot === l && !customLot ? C.ac : C.bd}`, background: lot === l && !customLot ? `${C.ac}1a` : "transparent", color: lot === l && !customLot ? C.ac : C.t2, cursor: "pointer" }}>
+                {l}
+              </button>
+            ))}
+            <input value={customLot} onChange={e => setCustomLot(e.target.value)} placeholder="..."
+              style={{ fontFamily: F.m, fontSize: 11, width: 50, padding: "5px 6px", borderRadius: 3, border: `1px solid ${customLot ? C.ac : C.bd}`, background: C.bg, color: C.tx, outline: "none" }} />
+          </div>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: F.s, fontSize: 11, color: C.t3, marginBottom: 4 }}>R:R Ratio</div>
+          <div style={{ display: "flex", gap: 3 }}>
+            {[1.5, 2, 3, 4].map(rr => (
+              <button key={rr} onClick={() => setRrRatio(rr)}
+                style={{ fontFamily: F.m, fontSize: 10, padding: "5px 7px", borderRadius: 3, border: `1px solid ${rrRatio === rr ? C.pu : C.bd}`, background: rrRatio === rr ? `${C.pu}1a` : "transparent", color: rrRatio === rr ? C.pu : C.t3, cursor: "pointer" }}>
+                {rr}:1
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* SL/TP */}
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 5 }}>
-          <span style={{ fontFamily: F.s, fontSize: 12, color: C.t3 }}>SL / TP</span>
+      {/* SL/TP Mode Toggle */}
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+          <span style={{ fontFamily: F.s, fontSize: 11, color: C.t3 }}>SL / TP</span>
           <button onClick={() => setUseSig(!useSig)}
-            style={{ fontFamily: F.s, fontSize: 11, padding: "3px 8px", borderRadius: 3, border: `1px solid ${useSig ? C.bu : C.bd}`, background: useSig ? `${C.bu}1a` : "transparent", color: useSig ? C.bu : C.t3, cursor: "pointer" }}>
-            {useSig ? "Auto (signal)" : "Manual"}
+            style={{ fontFamily: F.s, fontSize: 10, padding: "2px 8px", borderRadius: 3, border: `1px solid ${useSig ? C.bu : C.bd}`, background: useSig ? `${C.bu}1a` : "transparent", color: useSig ? C.bu : C.t3, cursor: "pointer" }}>
+            {useSig ? "Auto" : "Manual"}
           </button>
+          {useSig && useSigInvalidation && <Bdg t="INV" c={C.pu} sz="sm" />}
+          {useSig && !useSigInvalidation && <Bdg t="ATR" c={C.wa} sz="sm" />}
         </div>
-        {useSig ? (
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: F.m, fontSize: 12, color: C.be }}>SL: {sigSl?.toFixed(2) || "—"} <span style={{ color: C.t3 }}>({slDist.toFixed(2)} pts)</span></span>
-            <span style={{ fontFamily: F.m, fontSize: 12, color: C.bu }}>TP: {sigTp?.toFixed(2) || "—"} <span style={{ color: C.t3 }}>(4:1)</span></span>
-            {activeLot > 0 && slDist > 0 && <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3 }}>Risk: ~${(activeLot * slDist * 100).toFixed(0)} → Reward: ~${(activeLot * slDist * 400).toFixed(0)}</span>}
-          </div>
-        ) : (
-          <div style={{ display: "flex", gap: 8 }}>
+        {!useSig && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
             <input value={manSl} onChange={e => setManSl(e.target.value)} placeholder="SL price"
-              style={{ fontFamily: F.m, fontSize: 12, width: 90, padding: "6px 8px", borderRadius: 4, border: `1px solid ${C.bd}`, background: C.bg, color: C.tx, outline: "none" }} />
+              style={{ fontFamily: F.m, fontSize: 11, width: 85, padding: "5px 7px", borderRadius: 3, border: `1px solid ${C.be}44`, background: C.bg, color: C.tx, outline: "none" }} />
             <input value={manTp} onChange={e => setManTp(e.target.value)} placeholder="TP price"
-              style={{ fontFamily: F.m, fontSize: 12, width: 90, padding: "6px 8px", borderRadius: 4, border: `1px solid ${C.bd}`, background: C.bg, color: C.tx, outline: "none" }} />
+              style={{ fontFamily: F.m, fontSize: 11, width: 85, padding: "5px 7px", borderRadius: 3, border: `1px solid ${C.bu}44`, background: C.bg, color: C.tx, outline: "none" }} />
           </div>
         )}
       </div>
 
+      {/* Trade Preview Cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+        {/* BUY Preview */}
+        <div style={{ padding: "8px 10px", background: `${C.bu}08`, border: `1px solid ${C.bu}22`, borderRadius: 5 }}>
+          <div style={{ fontFamily: F.m, fontSize: 10, color: C.bu, marginBottom: 4, fontWeight: 700 }}>▲ BUY PREVIEW</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, fontFamily: F.m, fontSize: 10 }}>
+            <span style={{ color: C.t3 }}>Entry:</span><span style={{ color: C.tx, textAlign: "right" }}>{buyEntry.toFixed(2)}</span>
+            <span style={{ color: C.t3 }}>SL:</span><span style={{ color: C.be, textAlign: "right" }}>{buySl.toFixed(2)} <span style={{ color: C.t3, fontSize: 8 }}>(-{buySlDist.toFixed(1)})</span></span>
+            <span style={{ color: C.t3 }}>TP:</span><span style={{ color: C.bu, textAlign: "right" }}>{buyTp.toFixed(2)} <span style={{ color: C.t3, fontSize: 8 }}>(+{(buySlDist * rrRatio).toFixed(1)})</span></span>
+            <span style={{ color: C.t3 }}>Risk:</span><span style={{ color: buyRiskPct > 2 ? C.wa : C.tx, textAlign: "right" }}>${buyRisk.toFixed(0)} <span style={{ fontSize: 8 }}>({buyRiskPct.toFixed(1)}%)</span></span>
+            <span style={{ color: C.t3 }}>Reward:</span><span style={{ color: C.bu, textAlign: "right" }}>${buyReward.toFixed(0)}</span>
+          </div>
+        </div>
+        {/* SELL Preview */}
+        <div style={{ padding: "8px 10px", background: `${C.be}08`, border: `1px solid ${C.be}22`, borderRadius: 5 }}>
+          <div style={{ fontFamily: F.m, fontSize: 10, color: C.be, marginBottom: 4, fontWeight: 700 }}>▼ SELL PREVIEW</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, fontFamily: F.m, fontSize: 10 }}>
+            <span style={{ color: C.t3 }}>Entry:</span><span style={{ color: C.tx, textAlign: "right" }}>{sellEntry.toFixed(2)}</span>
+            <span style={{ color: C.t3 }}>SL:</span><span style={{ color: C.be, textAlign: "right" }}>{sellSl.toFixed(2)} <span style={{ color: C.t3, fontSize: 8 }}>(+{sellSlDist.toFixed(1)})</span></span>
+            <span style={{ color: C.t3 }}>TP:</span><span style={{ color: C.bu, textAlign: "right" }}>{sellTp.toFixed(2)} <span style={{ color: C.t3, fontSize: 8 }}>(-{(sellSlDist * rrRatio).toFixed(1)})</span></span>
+            <span style={{ color: C.t3 }}>Risk:</span><span style={{ color: sellRiskPct > 2 ? C.wa : C.tx, textAlign: "right" }}>${sellRisk.toFixed(0)} <span style={{ fontSize: 8 }}>({sellRiskPct.toFixed(1)}%)</span></span>
+            <span style={{ color: C.t3 }}>Reward:</span><span style={{ color: C.bu, textAlign: "right" }}>${sellReward.toFixed(0)}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Buy / Sell buttons */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-        <button onClick={() => exec("buy")} disabled={loading}
-          style={{ padding: "14px 0", borderRadius: 6, border: "none", background: loading ? `${C.bu}44` : `linear-gradient(135deg, #0fd49288, #0fd492)`, color: "#080c14", fontFamily: F.m, fontWeight: 800, fontSize: 16, cursor: loading ? "not-allowed" : "pointer", letterSpacing: "0.05em" }}>
-          ▲ BUY
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+        <button onClick={() => exec("buy")} disabled={loading || !bid}
+          style={{ padding: "14px 0", borderRadius: 6, border: "none", background: loading || !bid ? `${C.bu}44` : `linear-gradient(135deg, #0fd49288, #0fd492)`, color: "#080c14", fontFamily: F.m, fontWeight: 800, fontSize: 15, cursor: loading || !bid ? "not-allowed" : "pointer", letterSpacing: "0.05em" }}>
+          ▲ BUY @ {ask.toFixed(2)}
         </button>
-        <button onClick={() => exec("sell")} disabled={loading}
-          style={{ padding: "14px 0", borderRadius: 6, border: "none", background: loading ? `${C.be}44` : `linear-gradient(135deg, #f0484888, #f04848)`, color: "#fff", fontFamily: F.m, fontWeight: 800, fontSize: 16, cursor: loading ? "not-allowed" : "pointer", letterSpacing: "0.05em" }}>
-          ▼ SELL
+        <button onClick={() => exec("sell")} disabled={loading || !bid}
+          style={{ padding: "14px 0", borderRadius: 6, border: "none", background: loading || !bid ? `${C.be}44` : `linear-gradient(135deg, #f0484888, #f04848)`, color: "#fff", fontFamily: F.m, fontWeight: 800, fontSize: 15, cursor: loading || !bid ? "not-allowed" : "pointer", letterSpacing: "0.05em" }}>
+          ▼ SELL @ {bid.toFixed(2)}
         </button>
       </div>
 
       {/* Close All */}
       {(account?.positions?.length || 0) > 0 && (
         <button onClick={closeAll} disabled={loading}
-          style={{ width: "100%", padding: "9px 0", borderRadius: 5, border: `1px solid ${C.wa}44`, background: `${C.wa}0d`, color: C.wa, fontFamily: F.m, fontWeight: 700, fontSize: 13, cursor: loading ? "not-allowed" : "pointer", marginBottom: 8 }}>
-          ✕ CLOSE ALL POSITIONS
+          style={{ width: "100%", padding: "8px 0", borderRadius: 5, border: `1px solid ${C.wa}44`, background: `${C.wa}0d`, color: C.wa, fontFamily: F.m, fontWeight: 700, fontSize: 12, cursor: loading ? "not-allowed" : "pointer", marginBottom: 8 }}>
+          ✕ CLOSE ALL ({account.positions.length})
         </button>
       )}
 
       {/* Account summary */}
       {account && (
-        <div style={{ borderTop: `1px solid ${C.bd}`, paddingTop: 10, marginTop: 6 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
-            <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3 }}>Balance</span>
-            <span style={{ fontFamily: F.m, fontSize: 12, color: C.tx }}>${account.balance?.toFixed(2)}</span>
+        <div style={{ borderTop: `1px solid ${C.bd}`, paddingTop: 8, marginTop: 4 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
+            <span style={{ fontFamily: F.m, fontSize: 11, color: C.t3 }}>Balance</span>
+            <span style={{ fontFamily: F.m, fontSize: 11, color: C.tx }}>${account.balance?.toFixed(2)}</span>
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
-            <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3 }}>Equity</span>
-            <span style={{ fontFamily: F.m, fontSize: 12, color: account.profit >= 0 ? C.bu : C.be }}>${account.equity?.toFixed(2)}</span>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
+            <span style={{ fontFamily: F.m, fontSize: 11, color: C.t3 }}>Equity</span>
+            <span style={{ fontFamily: F.m, fontSize: 11, color: account.profit >= 0 ? C.bu : C.be }}>${account.equity?.toFixed(2)}</span>
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
-            <span style={{ fontFamily: F.m, fontSize: 12, color: C.t3 }}>Open P&L</span>
-            <span style={{ fontFamily: F.m, fontSize: 13, fontWeight: 700, color: account.profit >= 0 ? C.bu : C.be }}>{fp(account.profit)}</span>
+          <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
+            <span style={{ fontFamily: F.m, fontSize: 11, color: C.t3 }}>Open P&L</span>
+            <span style={{ fontFamily: F.m, fontSize: 12, fontWeight: 700, color: account.profit >= 0 ? C.bu : C.be }}>{fp(account.profit)}</span>
           </div>
         </div>
       )}
 
       {status && (
-        <div style={{ marginTop: 8, padding: "7px 10px", borderRadius: 4, background: status.ok ? `${C.bu}0d` : `${C.be}0d`, border: `1px solid ${status.ok ? C.bu : C.be}33` }}>
-          <span style={{ fontFamily: F.m, fontSize: 12, color: status.ok ? C.bu : C.be }}>{status.msg}</span>
+        <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 4, background: status.ok ? `${C.bu}0d` : `${C.be}0d`, border: `1px solid ${status.ok ? C.bu : C.be}33` }}>
+          <span style={{ fontFamily: F.m, fontSize: 11, color: status.ok ? C.bu : C.be }}>{status.msg}</span>
         </div>
       )}
     </div>
   );
 }
 
-function PositionsPanel({ positions, onClose }: { positions: Pos[]; onClose: (ticket: number) => Promise<any> }) {
-  const [closing, setClosing] = useState<number | null>(null);
-  const [msgs, setMsgs] = useState<Record<number, string>>({});
+// Paper trade type for combined display
+interface PaperTrade {
+  order_id: string;
+  direction: string;
+  volume: number;
+  entry_price: number;
+  sl: number;
+  tp: number;
+  profit?: number;
+  status: string;
+  timestamp: string;
+}
 
-  const close = async (ticket: number) => {
-    setClosing(ticket);
+function PositionsPanel({
+  positions,
+  paperTrades,
+  currentBid,
+  onClose,
+  onModify,
+  onBreakeven,
+}: {
+  positions: Pos[];
+  paperTrades?: PaperTrade[];
+  currentBid: number;
+  onClose: (ticket?: number, orderId?: string) => Promise<any>;
+  onModify: (sl?: number, tp?: number, ticket?: number, orderId?: string) => Promise<any>;
+  onBreakeven: (ticket?: number, orderId?: string) => Promise<any>;
+}) {
+  const [closing, setClosing] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editSl, setEditSl] = useState("");
+  const [editTp, setEditTp] = useState("");
+  const [msgs, setMsgs] = useState<Record<string, string>>({});
+
+  const close = async (id: string, ticket?: number, orderId?: string) => {
+    setClosing(id);
     try {
-      const r = await onClose(ticket);
-      setMsgs(m => ({ ...m, [ticket]: r?.ok ? "✓ Close queued" : `✗ ${r?.error}` }));
-    } catch (e: any) { setMsgs(m => ({ ...m, [ticket]: `✗ ${e.message}` })); }
+      const r = await onClose(ticket, orderId);
+      setMsgs(m => ({ ...m, [id]: r?.ok ? "✓ Closed" : `✗ ${r?.error}` }));
+    } catch (e: any) { setMsgs(m => ({ ...m, [id]: `✗ ${e.message}` })); }
     setClosing(null);
   };
 
-  if (!positions?.length) return <div style={{ fontFamily: F.m, fontSize: 13, color: C.t3, textAlign: "center", padding: 24 }}>No open positions</div>;
+  const modify = async (id: string, ticket?: number, orderId?: string) => {
+    const sl = editSl ? parseFloat(editSl) : undefined;
+    const tp = editTp ? parseFloat(editTp) : undefined;
+    if (!sl && !tp) { setEditing(null); return; }
+    try {
+      const r = await onModify(sl, tp, ticket, orderId);
+      setMsgs(m => ({ ...m, [id]: r?.ok ? "✓ Modified" : `✗ ${r?.error}` }));
+      setEditing(null); setEditSl(""); setEditTp("");
+    } catch (e: any) { setMsgs(m => ({ ...m, [id]: `✗ ${e.message}` })); }
+  };
+
+  const breakeven = async (id: string, ticket?: number, orderId?: string) => {
+    try {
+      const r = await onBreakeven(ticket, orderId);
+      setMsgs(m => ({ ...m, [id]: r?.ok ? `✓ BE @ ${r.sl?.toFixed(2)}` : `✗ ${r?.error}` }));
+    } catch (e: any) { setMsgs(m => ({ ...m, [id]: `✗ ${e.message}` })); }
+  };
+
+  // Combine live and paper positions
+  const allPositions = [
+    ...positions.map(p => ({
+      id: `live-${p.ticket}`,
+      type: "live" as const,
+      ticket: p.ticket,
+      direction: p.direction,
+      volume: p.volume,
+      entry: p.open_price,
+      current: p.current_price,
+      sl: p.sl,
+      tp: p.tp,
+      profit: p.profit,
+    })),
+    ...(paperTrades || []).filter(t => t.status === "filled").map(t => ({
+      id: `paper-${t.order_id}`,
+      type: "paper" as const,
+      orderId: t.order_id,
+      direction: t.direction,
+      volume: t.volume,
+      entry: t.entry_price,
+      current: t.direction === "buy" ? currentBid : currentBid + 3,
+      sl: t.sl,
+      tp: t.tp,
+      profit: t.profit || (t.direction === "buy"
+        ? (currentBid - t.entry_price) * t.volume * 100
+        : (t.entry_price - currentBid) * t.volume * 100),
+    })),
+  ];
+
+  if (!allPositions.length) {
+    return <div style={{ fontFamily: F.m, fontSize: 13, color: C.t3, textAlign: "center", padding: 24 }}>No open positions</div>;
+  }
 
   return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: F.m, fontSize: 12 }}>
-        <thead><tr style={{ borderBottom: `1px solid ${C.bd}` }}>
-          {["Ticket", "Dir", "Vol", "Open", "Current", "SL", "TP", "P&L", ""].map(h => (
-            <th key={h} style={{ padding: "6px 6px", textAlign: "left", color: C.t3, fontWeight: 500, fontSize: 11, whiteSpace: "nowrap" }}>{h}</th>
-          ))}
-        </tr></thead>
-        <tbody>
-          {positions.map(p => (
-            <tr key={p.ticket} style={{ borderBottom: `1px solid ${C.bd}15` }}>
-              <td style={{ padding: "6px 6px", color: C.t2 }}>{p.ticket}</td>
-              <td style={{ padding: "6px 6px" }}><Bdg t={p.direction.toUpperCase()} c={p.direction === "buy" ? C.bu : C.be} /></td>
-              <td style={{ padding: "6px 6px", color: C.tx }}>{p.volume}</td>
-              <td style={{ padding: "6px 6px", color: C.t2 }}>{p.open_price?.toFixed(2)}</td>
-              <td style={{ padding: "6px 6px", color: C.tx }}>{p.current_price?.toFixed(2)}</td>
-              <td style={{ padding: "6px 6px", color: C.be }}>{p.sl?.toFixed(2) || "—"}</td>
-              <td style={{ padding: "6px 6px", color: C.bu }}>{p.tp?.toFixed(2) || "—"}</td>
-              <td style={{ padding: "6px 6px", color: p.profit >= 0 ? C.bu : C.be, fontWeight: 700 }}>{fp(p.profit)}</td>
-              <td style={{ padding: "6px 6px" }}>
-                {msgs[p.ticket] ? (
-                  <span style={{ fontSize: 11, color: msgs[p.ticket].startsWith("✓") ? C.bu : C.be }}>{msgs[p.ticket]}</span>
+    <div>
+      {allPositions.map(p => {
+        const isEditing = editing === p.id;
+        const msg = msgs[p.id];
+        const canBreakeven = p.direction === "buy" ? currentBid > p.entry : currentBid < p.entry;
+
+        return (
+          <div key={p.id} style={{ padding: "10px 12px", marginBottom: 8, background: `${p.type === "paper" ? C.ac : C.pu}08`, border: `1px solid ${p.type === "paper" ? C.ac : C.pu}22`, borderRadius: 6 }}>
+            {/* Header row */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Bdg t={p.direction.toUpperCase()} c={p.direction === "buy" ? C.bu : C.be} sz="md" />
+                <span style={{ fontFamily: F.m, fontSize: 13, color: C.tx, fontWeight: 700 }}>{p.volume} lot</span>
+                <Bdg t={p.type.toUpperCase()} c={p.type === "paper" ? C.ac : C.pu} sz="sm" />
+              </div>
+              <div style={{ fontFamily: F.m, fontSize: 15, fontWeight: 800, color: (p.profit || 0) >= 0 ? C.bu : C.be }}>
+                {fp(p.profit || 0)}
+              </div>
+            </div>
+
+            {/* Price info */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+              <div>
+                <div style={{ fontFamily: F.m, fontSize: 9, color: C.t3 }}>Entry</div>
+                <div style={{ fontFamily: F.m, fontSize: 12, color: C.tx }}>{p.entry?.toFixed(2)}</div>
+              </div>
+              <div>
+                <div style={{ fontFamily: F.m, fontSize: 9, color: C.t3 }}>Current</div>
+                <div style={{ fontFamily: F.m, fontSize: 12, color: C.tx }}>{p.current?.toFixed(2)}</div>
+              </div>
+              <div>
+                <div style={{ fontFamily: F.m, fontSize: 9, color: C.be }}>SL</div>
+                {isEditing ? (
+                  <input value={editSl} onChange={e => setEditSl(e.target.value)} placeholder={p.sl?.toFixed(2) || "—"}
+                    style={{ fontFamily: F.m, fontSize: 11, width: "100%", padding: "3px 5px", borderRadius: 3, border: `1px solid ${C.be}44`, background: C.bg, color: C.tx, outline: "none" }} />
                 ) : (
-                  <button onClick={() => close(p.ticket)} disabled={closing === p.ticket}
-                    style={{ fontFamily: F.m, fontSize: 11, padding: "4px 10px", borderRadius: 3, border: `1px solid ${C.be}44`, background: `${C.be}0d`, color: C.be, cursor: "pointer" }}>
-                    Close
-                  </button>
+                  <div style={{ fontFamily: F.m, fontSize: 12, color: C.be }}>{p.sl?.toFixed(2) || "—"}</div>
                 )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </div>
+              <div>
+                <div style={{ fontFamily: F.m, fontSize: 9, color: C.bu }}>TP</div>
+                {isEditing ? (
+                  <input value={editTp} onChange={e => setEditTp(e.target.value)} placeholder={p.tp?.toFixed(2) || "—"}
+                    style={{ fontFamily: F.m, fontSize: 11, width: "100%", padding: "3px 5px", borderRadius: 3, border: `1px solid ${C.bu}44`, background: C.bg, color: C.tx, outline: "none" }} />
+                ) : (
+                  <div style={{ fontFamily: F.m, fontSize: 12, color: C.bu }}>{p.tp?.toFixed(2) || "—"}</div>
+                )}
+              </div>
+            </div>
+
+            {/* Actions */}
+            {msg ? (
+              <div style={{ fontFamily: F.m, fontSize: 11, color: msg.startsWith("✓") ? C.bu : C.be, padding: "4px 0" }}>{msg}</div>
+            ) : (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {isEditing ? (
+                  <>
+                    <button onClick={() => modify(p.id, p.type === "live" ? p.ticket : undefined, p.type === "paper" ? p.orderId : undefined)}
+                      style={{ fontFamily: F.m, fontSize: 10, padding: "4px 10px", borderRadius: 3, border: `1px solid ${C.bu}44`, background: `${C.bu}1a`, color: C.bu, cursor: "pointer" }}>
+                      Save
+                    </button>
+                    <button onClick={() => { setEditing(null); setEditSl(""); setEditTp(""); }}
+                      style={{ fontFamily: F.m, fontSize: 10, padding: "4px 10px", borderRadius: 3, border: `1px solid ${C.t3}44`, background: "transparent", color: C.t3, cursor: "pointer" }}>
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => { setEditing(p.id); setEditSl(""); setEditTp(""); }}
+                      style={{ fontFamily: F.m, fontSize: 10, padding: "4px 10px", borderRadius: 3, border: `1px solid ${C.ac}44`, background: `${C.ac}0d`, color: C.ac, cursor: "pointer" }}>
+                      Edit SL/TP
+                    </button>
+                    {canBreakeven && (
+                      <button onClick={() => breakeven(p.id, p.type === "live" ? p.ticket : undefined, p.type === "paper" ? p.orderId : undefined)}
+                        style={{ fontFamily: F.m, fontSize: 10, padding: "4px 10px", borderRadius: 3, border: `1px solid ${C.wa}44`, background: `${C.wa}0d`, color: C.wa, cursor: "pointer" }}>
+                        → B/E
+                      </button>
+                    )}
+                    <button onClick={() => close(p.id, p.type === "live" ? p.ticket : undefined, p.type === "paper" ? p.orderId : undefined)}
+                      disabled={closing === p.id}
+                      style={{ fontFamily: F.m, fontSize: 10, padding: "4px 10px", borderRadius: 3, border: `1px solid ${C.be}44`, background: `${C.be}0d`, color: C.be, cursor: closing === p.id ? "not-allowed" : "pointer" }}>
+                      Close
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -898,16 +1127,32 @@ export default function PhundDashboard() {
     return () => clearInterval(i);
   }, [activeTab, fetchSpectre]);
 
-  const sendTrade = async (action: string, direction?: string, volume?: number, slP?: number, tpP?: number, ticket?: number) => {
+  const sendTrade = async (action: string, direction?: string, volume?: number, slP?: number, tpP?: number, ticket?: number, orderId?: string) => {
     const r = await fetch("/api/trade/manual", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, direction, volume, sl: slP, tp: tpP, symbol: "XAUUSD", ticket }),
+      body: JSON.stringify({ action, direction, volume, sl: slP, tp: tpP, symbol: "XAUUSD", ticket, order_id: orderId }),
     });
     return r.json();
   };
 
-  const closePosition = async (ticket: number) => sendTrade("close", undefined, undefined, undefined, undefined, ticket);
+  const closePosition = async (ticket?: number, orderId?: string) => {
+    return sendTrade("close", undefined, undefined, undefined, undefined, ticket, orderId);
+  };
+
+  const modifyPosition = async (sl?: number, tp?: number, ticket?: number, orderId?: string) => {
+    return sendTrade("modify", undefined, undefined, sl, tp, ticket, orderId);
+  };
+
+  const breakevenPosition = async (ticket?: number, orderId?: string) => {
+    const r = await fetch("/api/trade/manual", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "breakeven", symbol: "XAUUSD", ticket, order_id: orderId }),
+    });
+    return r.json();
+  };
+
   const testTG = async () => { setTgR("Sending..."); try { const r = await fetch("/api/telegram/test", { method: "POST" }); const j = await r.json(); setTgR(j.ok ? "✅ Sent!" : `❌ ${j.error}`); } catch (e: any) { setTgR(`❌ ${e.message}`); } };
 
   if (loading && !data) return (
@@ -1003,7 +1248,7 @@ export default function PhundDashboard() {
 
         {/* TRADE EXECUTION */}
         <Card title="Trade Execution — XAUUSD">
-          <TradePanel signal={s ?? null} account={acct} onTrade={sendTrade} />
+          <TradePanel signal={s ?? null} account={acct} tradeMode={data?.trade_mode || "paper"} onTrade={sendTrade} />
         </Card>
 
         {/* SIGNAL SUMMARY */}
@@ -1034,8 +1279,15 @@ export default function PhundDashboard() {
         </Card>
 
         {/* OPEN POSITIONS */}
-        <Card title={`Open Positions (${positions.length})`} span={2}>
-          <PositionsPanel positions={positions} onClose={closePosition} />
+        <Card title={`Open Positions (${positions.length + (data?.trade_history?.filter((t: any) => t.status === "filled" && t.mode === "paper").length || 0)})`} span={2}>
+          <PositionsPanel
+            positions={positions}
+            paperTrades={data?.trade_history?.filter((t: any) => t.mode === "paper")}
+            currentBid={s?.bid || 0}
+            onClose={closePosition}
+            onModify={modifyPosition}
+            onBreakeven={breakevenPosition}
+          />
         </Card>
 
         {/* FACTOR MATRIX */}
