@@ -1445,218 +1445,420 @@ export default function PhundDashboard() {
       )}
       {err && <div style={{ background: `${C.be}14`, padding: "7px 16px", fontFamily: F.m, fontSize: 11, color: C.be, borderBottom: `1px solid ${C.be}33` }}>API: {err}</div>}
 
-      {/* MAIN GRID */}
-      {activeTab === "phund" && <div style={{ padding: "12px 14px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(290px, 1fr))", gap: 10 }}>
+      {/* MAIN DASHBOARD — PLAIN ENGLISH LAYOUT */}
+      {activeTab === "phund" && (() => {
+        const v2 = data?.gold_v2;
+        const regime = v2?.regime?.regime || "unknown";
+        const structure = v2?.structure;
+        const perm = v2?.tradePermission;
+        const spreadGate = v2?.spreadGate;
+        const indMatrix = v2?.indicatorMatrix;
 
-        {/* TRADE EXECUTION */}
-        <Card title="Trade Execution — XAUUSD">
-          <TradePanel signal={s ?? null} account={acct} tradeMode={data?.trade_mode || "paper"} onTrade={sendTrade} />
-        </Card>
+        // Plain-English regime translation
+        const getRegimeSentence = () => {
+          if (!v2) return "Awaiting market data...";
+          const bosUp = structure?.bosUp;
+          const bosDown = structure?.bosDown;
+          switch (regime) {
+            case "bullish_trend": return "Gold is trending UP. The bot is looking to BUY.";
+            case "bearish_trend": return "Gold is trending DOWN. The bot is looking to SELL.";
+            case "bullish_reversal": return "Gold just reversed direction UPWARD. A new uptrend may be starting.";
+            case "bearish_reversal": return "Gold just reversed direction DOWNWARD. A new downtrend may be starting.";
+            case "breakout_expansion": return bosUp ? "Gold is BREAKING OUT to the upside. Strong momentum detected." : bosDown ? "Gold is BREAKING OUT to the downside. Strong momentum detected." : "Gold is in a breakout expansion phase.";
+            case "range": return "Gold is moving SIDEWAYS with no clear direction.";
+            case "unsafe": return "Market data is unreliable right now. The bot is standing aside.";
+            default: return "Analyzing market conditions...";
+          }
+        };
 
-        {/* SIGNAL SUMMARY */}
-        <Card title="Signal Summary">
-          {s ? (<>
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 6 }}>
-                  <span style={{ fontFamily: F.m, fontSize: 32, fontWeight: 800, color: scC(s.master_score), lineHeight: 1 }}>{s.master_score > 0 ? "+" : ""}{s.master_score.toFixed(1)}</span>
-                  <span style={{ fontFamily: F.m, fontSize: 11, color: C.t3 }}>/ 100</span>
+        // Determine direction color for headline
+        const getDirectionColor = () => {
+          if (regime.includes("bullish") || regime === "breakout_expansion" && structure?.bosUp) return C.bu;
+          if (regime.includes("bearish") || regime === "breakout_expansion" && structure?.bosDown) return C.be;
+          if (regime === "unsafe") return C.be;
+          return C.wa;
+        };
+
+        // Plain-English translation for block reasons
+        const translateBlockReason = (reason: string) => {
+          const map: Record<string, string> = {
+            "wrong_side_freeze": "Wrong Direction — Trade Blocked",
+            "daily_loss_lock": "Daily Loss Limit Reached",
+            "max_exposure": "Maximum Positions Open",
+            "cooldown": "Waiting After Spread Spike",
+            "spread_unsafe": "Spread Too Wide",
+            "feed_unhealthy": "MT5 Data Issue",
+            "regime_blocks_buy": "Market conditions don't favor buying",
+            "regime_blocks_sell": "Market conditions don't favor selling",
+            "no_trade_regime": "Market is unclear — standing aside",
+          };
+          return map[reason] || reason.replace(/_/g, " ");
+        };
+
+        // Translate trend values
+        const translateTrend = (t: string) => t === "bullish" ? "Rising" : t === "bearish" ? "Falling" : "Flat";
+
+        // Get signal direction for trade recommendation
+        const getSignalDirection = () => {
+          if (s?.state.includes("bull") || s?.state.includes("long") || s?.state === "breakout_watch_up") return "buy";
+          if (s?.state.includes("bear") || s?.state.includes("short") || s?.state === "breakout_watch_down") return "sell";
+          return null;
+        };
+
+        // Overall bias verdict
+        const getBiasVerdict = (score: number) => {
+          if (score >= 50) return { text: "Strong Buy Signal", color: C.bb };
+          if (score >= 25) return { text: "Moderate Buy Signal", color: C.bu };
+          if (score >= 1) return { text: "Weak Buy Signal", color: C.bu };
+          if (score === 0) return { text: "Neutral", color: C.nu };
+          if (score >= -24) return { text: "Weak Sell Signal", color: C.be };
+          if (score >= -49) return { text: "Moderate Sell Signal", color: C.be };
+          return { text: "Strong Sell Signal", color: C.br };
+        };
+
+        const dirColor = getDirectionColor();
+        const sigDir = getSignalDirection();
+        const biasVerdict = getBiasVerdict(indMatrix?.overallBias || 0);
+
+        // Calculate last data age
+        const getLastDataAge = () => {
+          if (!h?.mt5_last_payload) return 999;
+          try {
+            return Math.floor((Date.now() - new Date(h.mt5_last_payload).getTime()) / 1000);
+          } catch { return 999; }
+        };
+        const lastDataAge = getLastDataAge();
+
+        return (
+          <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+
+            {/* ============================================================ */}
+            {/* SECTION 1 — THE HEADLINE CARD */}
+            {/* ============================================================ */}
+            <div style={{ background: `linear-gradient(90deg, ${dirColor}08, ${C.cd})`, borderRadius: 8, border: `1px solid ${C.bd}`, borderLeft: `4px solid ${dirColor}`, padding: "16px 20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
+                {/* Left side — Status sentence + Price */}
+                <div style={{ flex: 1, minWidth: 280 }}>
+                  <div style={{ fontFamily: F.s, fontSize: 18, fontWeight: 600, color: C.tx, marginBottom: 12, lineHeight: 1.4 }}>
+                    {getRegimeSentence()}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 8 }}>
+                    <span style={{ fontFamily: F.m, fontSize: 32, fontWeight: 800, color: C.tx }}>{s?.price?.toFixed(2) || "—"}</span>
+                    <span style={{ fontFamily: F.s, fontSize: 13, color: C.t2 }}>XAUUSD</span>
+                  </div>
+                  <div style={{ fontFamily: F.s, fontSize: 13, color: spreadGate?.spreadSafe ? C.t2 : C.wa }}>
+                    Spread: {spreadGate?.spreadPoints?.toFixed(0) || "—"} points — {spreadGate?.spreadSafe ? "Normal" : "Wide (bot waiting)"}
+                  </div>
                 </div>
-                <Bdg t={sl(s.state)} c={sc} sz="lg" />
-                <div style={{ marginTop: 8 }}>
-                  <DR l="Confidence" v={s.confidence_label} c={s.confidence_pct > 0.7 ? C.bu : s.confidence_pct > 0.55 ? C.wa : C.be} m={false} />
-                  <DR l="Bull %" v={`${(s.bull_probability * 100).toFixed(1)}%`} c={C.bu} />
-                  <DR l="Bear %" v={`${(s.bear_probability * 100).toFixed(1)}%`} c={C.be} />
-                  <DR l="Risk" v={s.risk_level.replace(/_/g, " ")} c={s.risk_level === "low" ? C.bu : C.wa} m={false} />
-                  <DR l="Key Level" v={s.key_level.toFixed(2)} />
-                  <DR l="Invalidation" v={s.invalidation.toFixed(2)} c={C.be} />
-                  <DR l="Quality" v={s.data_quality} c={s.data_quality === "full" ? C.bu : C.wa} m={false} />
-                  <DR l="Scan" v={ft(s.timestamp)} />
+
+                {/* Right side — Permission lights */}
+                <div style={{ minWidth: 180 }}>
+                  {perm?.blockReasons && perm.blockReasons.length > 0 && !perm.allowNewTrade ? (
+                    <div style={{ background: `${C.wa}15`, border: `1px solid ${C.wa}33`, borderRadius: 6, padding: "10px 14px" }}>
+                      <div style={{ fontFamily: F.m, fontSize: 13, fontWeight: 700, color: C.wa }}>
+                        ⊘ Bot is standing aside
+                      </div>
+                      <div style={{ fontFamily: F.s, fontSize: 12, color: C.t2, marginTop: 4 }}>
+                        {translateBlockReason(perm.blockReasons[0])}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 18, height: 18, borderRadius: "50%", background: perm?.allowBuy ? C.bu : C.be, boxShadow: `0 0 8px ${perm?.allowBuy ? C.bu : C.be}44` }} />
+                        <span style={{ fontFamily: F.s, fontSize: 13, fontWeight: 600, color: perm?.allowBuy ? C.bu : C.be }}>BUY ALLOWED</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 18, height: 18, borderRadius: "50%", background: perm?.allowSell ? C.bu : C.be, boxShadow: `0 0 8px ${perm?.allowSell ? C.bu : C.be}44` }} />
+                        <span style={{ fontFamily: F.s, fontSize: 13, fontWeight: 600, color: perm?.allowSell ? C.bu : C.be }}>SELL ALLOWED</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 18, height: 18, borderRadius: "50%", background: perm?.allowNewTrade ? C.bu : C.be, boxShadow: `0 0 8px ${perm?.allowNewTrade ? C.bu : C.be}44` }} />
+                        <span style={{ fontFamily: F.s, fontSize: 13, fontWeight: 600, color: perm?.allowNewTrade ? C.bu : C.be }}>NEW TRADE OK</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
-              <Arc p={s.bull_probability} />
             </div>
-            {scans.length > 2 && <div style={{ marginTop: 10 }}><div style={{ fontFamily: F.m, fontSize: 9, color: C.t3, marginBottom: 3 }}>SCORE TREND</div><SChart hist={scans} /></div>}
-          </>) : <NoData />}
-        </Card>
 
-        {/* OPEN POSITIONS */}
-        <Card title={`Open Positions (${positions.length + (data?.trade_history?.filter((t: any) => t.status === "filled" && t.mode === "paper").length || 0)})`} span={2}>
-          <PositionsPanel
-            positions={positions}
-            paperTrades={data?.trade_history?.filter((t: any) => t.mode === "paper")}
-            currentBid={s?.bid || 0}
-            onClose={closePosition}
-            onModify={modifyPosition}
-            onBreakeven={breakevenPosition}
-          />
-        </Card>
+            {/* ============================================================ */}
+            {/* SECTION 2 — WHAT THE MARKET IS DOING */}
+            {/* ============================================================ */}
+            <div style={{ background: C.cd, borderRadius: 8, border: `1px solid ${C.bd}`, padding: "16px 18px" }}>
+              <div style={{ fontFamily: F.s, fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t2, marginBottom: 14 }}>What the Market Is Doing Right Now</div>
 
-        {/* FACTOR MATRIX */}
-        <Card title="Factor Matrix">
-          {s ? (<>
-            <FBar label="Trend" score={s.factors.trend?.score || 0} />
-            <FBar label="Momentum" score={s.factors.momentum?.score || 0} />
-            <FBar label="Volatility" score={s.factors.volatility?.score || 0} />
-            <FBar label="Structure" score={s.factors.structure?.score || 0} />
-            <FBar label="Macro" score={s.factors.macro?.score || 0} />
-            <FBar label="Session" score={s.factors.session?.score || 0} min={-30} max={30} />
-            <FBar label="Exhaustion" score={s.factors.exhaustion?.score || 0} min={-100} max={0} />
-            <FBar label="Event Risk" score={s.factors.event_risk?.score || 0} min={-100} max={0} />
-            <div style={{ marginTop: 6, fontFamily: F.m, fontSize: 9, color: C.t3 }}>T×.26 M×.20 V×.10 S×.18 C×.14 Q×.04 Ex×.04 Ev×.04</div>
-          </>) : <NoData />}
-        </Card>
-
-        {/* TREND ALIGNMENT */}
-        <Card title="Timeframe Directions">
-          {s ? (<>
-            {["10m", "1h", "4h"].map(tf => {
-              const bias = (s.tf_biases || {})[tf] as number ?? 0;
-              return <TfRow key={tf} tf={tf} bias={bias} />;
-            })}
-            <div style={{ marginTop: 8, padding: "5px 8px", background: `${sc}0d`, borderRadius: 4, border: `1px solid ${sc}1a` }}>
-              <span style={{ fontFamily: F.s, fontSize: 10, color: sc }}>
-                {s.factors.trend?.metadata?.alignment === "full_bull" ? "EMA Stack: Full Bullish ✓" : s.factors.trend?.metadata?.alignment === "full_bear" ? "EMA Stack: Full Bearish ✗" : "EMA Stack: Mixed"}
-              </span>
-            </div>
-            <div style={{ marginTop: 6 }}>
-              {[["EMA 20", s.factors.trend?.metadata?.ema20], ["EMA 50", s.factors.trend?.metadata?.ema50], ["EMA 200", s.factors.trend?.metadata?.ema200]].map(([l, v]) => (
-                <DR key={l as string} l={l as string} v={(v as number)?.toFixed(2) || "—"} c={s.price > (v as number) ? C.bu : C.be} />
-              ))}
-            </div>
-          </>) : <NoData />}
-        </Card>
-
-        {/* STRUCTURE */}
-        <Card title="Support & Resistance">
-          {s ? <SRLadder signal={s} /> : <NoData />}
-        </Card>
-
-        {/* MOMENTUM */}
-        <Card title="Momentum">
-          {s?.factors.momentum ? (<>
-            <DR l="RSI (14)" v={(s.factors.momentum.metadata.rsi || 50).toFixed(1)} c={s.factors.momentum.metadata.rsi > 70 ? C.be : s.factors.momentum.metadata.rsi < 30 ? C.bu : C.tx} />
-            <div style={{ height: 4, background: C.bd, borderRadius: 2, margin: "2px 0 6px", position: "relative" }}>
-              <div style={{ position: "absolute", left: "30%", width: "40%", height: "100%", background: `${C.nu}22` }} />
-              <div style={{ position: "absolute", left: `${s.factors.momentum.metadata.rsi || 50}%`, top: -2, width: 6, height: 8, borderRadius: 3, background: s.factors.momentum.metadata.rsi > 70 ? C.be : s.factors.momentum.metadata.rsi < 30 ? C.bu : C.ac, transform: "translateX(-50%)" }} />
-            </div>
-            <DR l="MACD Hist" v={(s.factors.momentum.metadata.macdHist || 0).toFixed(4)} c={s.factors.momentum.metadata.macdHist > 0 ? C.bu : C.be} />
-            <DR l="ROC (5)" v={`${(s.factors.momentum.metadata.roc || 0).toFixed(3)}%`} c={(s.factors.momentum.metadata.roc || 0) > 0 ? C.bu : C.be} />
-            <DR l="ADX" v={(s.factors.momentum.metadata.adx?.adx || 0).toFixed(1)} c={(s.factors.momentum.metadata.adx?.adx || 0) > 25 ? C.ac : C.t3} />
-            <DR l="Pressure" v={s.factors.momentum.metadata.candlePressure || "—"} c={s.factors.momentum.metadata.candlePressure === "bullish" ? C.bu : s.factors.momentum.metadata.candlePressure === "bearish" ? C.be : C.nu} m={false} />
-            {s.factors.momentum.metadata.velocity && (
-              <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontFamily: F.s, fontSize: 10, color: C.t3 }}>Velocity:</span>
-                <Bdg t={s.factors.momentum.metadata.velocity.toUpperCase()} c={velocityColor(s.factors.momentum.metadata.velocity)} sz="sm" />
-                {s.factors.momentum.metadata.momentumSlope !== undefined && (
-                  <span style={{ fontFamily: F.m, fontSize: 10, color: C.t3 }}>({(s.factors.momentum.metadata.momentumSlope || 0).toFixed(2)})</span>
-                )}
-              </div>
-            )}
-          </>) : <NoData />}
-        </Card>
-
-        {/* VOLATILITY */}
-        <Card title="Volatility">
-          {s?.factors.volatility ? (<>
-            <DR l="ATR (14)" v={(s.factors.volatility.metadata.atr || 0).toFixed(2)} />
-            <DR l="ATR Ratio" v={(s.factors.volatility.metadata.atrRatio || 1).toFixed(2)} c={(s.factors.volatility.metadata.atrRatio || 1) > 1.3 ? C.wa : C.tx} />
-            <DR l="BB Width" v={`${(s.factors.volatility.metadata.bb?.width || 0).toFixed(2)}%`} />
-            <DR l="BB Pos" v={`${((s.factors.volatility.metadata.bbPos || 0.5) * 100).toFixed(0)}%`} />
-            <div style={{ marginTop: 5 }}><Bdg t={(s.factors.volatility.metadata.status || "normal").toUpperCase()} c={s.factors.volatility.metadata.compressed ? C.pu : s.factors.volatility.metadata.expanding ? C.wa : C.nu} sz="md" /></div>
-          </>) : <NoData />}
-        </Card>
-
-        {/* MACRO + SESSION + EVENT */}
-        <Card title="Macro / Session / Events">
-          {s ? (<>
-            <DR l="Macro Bias" v={s.factors.macro?.metadata?.bias || "Neutral"} c={s.factors.macro?.metadata?.bias?.includes("bullish") ? C.bu : s.factors.macro?.metadata?.bias?.includes("bearish") ? C.be : C.nu} m={false} />
-            <DR l="DXY Δ10m" v={`${((s.factors.macro?.metadata?.dxy_d10 || 0) * 100).toFixed(3)}%`} c={(s.factors.macro?.metadata?.dxy_d10 || 0) < 0 ? C.bu : C.be} />
-            <DR l="US10Y Δ10m" v={`${((s.factors.macro?.metadata?.y10_d10 || 0) * 100).toFixed(3)}%`} c={(s.factors.macro?.metadata?.y10_d10 || 0) < 0 ? C.bu : C.be} />
-            <DR l="Macro Live" v={s.factors.macro?.metadata?.live ? "Yes" : "No — add DXY to EA"} c={s.factors.macro?.metadata?.live ? C.bu : C.wa} m={false} />
-            <div style={{ marginTop: 6, borderTop: `1px solid ${C.bd}33`, paddingTop: 5 }}>
-              <DR l="Session" v={s.factors.session?.metadata?.label || "—"} c={(s.factors.session?.score || 0) > 0 ? C.bu : C.wa} m={false} />
-              <DR l="Session Score" v={`${(s.factors.session?.score || 0) > 0 ? "+" : ""}${(s.factors.session?.score || 0).toFixed(0)}`} />
-              {s.factors.session?.metadata?.dst && (
-                <div style={{ marginTop: 4, display: "flex", gap: 8 }}>
-                  <Bdg t={`US DST: ${s.factors.session.metadata.dst.us ? "ON" : "OFF"}`} c={C.t3} sz="sm" />
-                  <Bdg t={`EU DST: ${s.factors.session.metadata.dst.eu ? "ON" : "OFF"}`} c={C.t3} sz="sm" />
+              {/* Structure flags as explanation pills */}
+              {structure && (structure.bosUp || structure.bosDown || structure.chochUp || structure.chochDown || structure.bullishSweep || structure.bearishSweep) ? (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
+                  {structure.bosUp && (
+                    <div style={{ background: `${C.bu}12`, border: `1px solid ${C.bu}33`, borderRadius: 6, padding: "10px 14px", maxWidth: 260 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 16 }}>↑</span>
+                        <span style={{ fontFamily: F.s, fontSize: 13, fontWeight: 700, color: C.bu }}>Upward Breakout</span>
+                      </div>
+                      <div style={{ fontFamily: F.s, fontSize: 12, color: C.t2, lineHeight: 1.4 }}>Price just broke above a previous high. Buyers are in control.</div>
+                    </div>
+                  )}
+                  {structure.bosDown && (
+                    <div style={{ background: `${C.be}12`, border: `1px solid ${C.be}33`, borderRadius: 6, padding: "10px 14px", maxWidth: 260 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 16 }}>↓</span>
+                        <span style={{ fontFamily: F.s, fontSize: 13, fontWeight: 700, color: C.be }}>Downward Breakout</span>
+                      </div>
+                      <div style={{ fontFamily: F.s, fontSize: 12, color: C.t2, lineHeight: 1.4 }}>Price just broke below a previous low. Sellers are in control.</div>
+                    </div>
+                  )}
+                  {structure.chochUp && (
+                    <div style={{ background: `${C.bb}12`, border: `1px solid ${C.bb}33`, borderRadius: 6, padding: "10px 14px", maxWidth: 260 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 14 }}>🔄↑</span>
+                        <span style={{ fontFamily: F.s, fontSize: 13, fontWeight: 700, color: C.bb }}>Trend Reversal UP</span>
+                      </div>
+                      <div style={{ fontFamily: F.s, fontSize: 12, color: C.t2, lineHeight: 1.4 }}>The market was falling but just switched to rising. A new uptrend is forming.</div>
+                    </div>
+                  )}
+                  {structure.chochDown && (
+                    <div style={{ background: `${C.br}12`, border: `1px solid ${C.br}33`, borderRadius: 6, padding: "10px 14px", maxWidth: 260 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 14 }}>🔄↓</span>
+                        <span style={{ fontFamily: F.s, fontSize: 13, fontWeight: 700, color: C.br }}>Trend Reversal DOWN</span>
+                      </div>
+                      <div style={{ fontFamily: F.s, fontSize: 12, color: C.t2, lineHeight: 1.4 }}>The market was rising but just switched to falling. A new downtrend is forming.</div>
+                    </div>
+                  )}
+                  {structure.bullishSweep && (
+                    <div style={{ background: `${C.bu}12`, border: `1px solid ${C.bu}33`, borderRadius: 6, padding: "10px 14px", maxWidth: 280 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 14 }}>🧹↑</span>
+                        <span style={{ fontFamily: F.s, fontSize: 13, fontWeight: 700, color: C.bu }}>Bear Trap (Bullish Sweep)</span>
+                      </div>
+                      <div style={{ fontFamily: F.s, fontSize: 12, color: C.t2, lineHeight: 1.4 }}>Price briefly dipped below support to shake out sellers, then reversed UP. Smart money is buying.</div>
+                    </div>
+                  )}
+                  {structure.bearishSweep && (
+                    <div style={{ background: `${C.be}12`, border: `1px solid ${C.be}33`, borderRadius: 6, padding: "10px 14px", maxWidth: 280 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                        <span style={{ fontSize: 14 }}>🧹↓</span>
+                        <span style={{ fontFamily: F.s, fontSize: 13, fontWeight: 700, color: C.be }}>Bull Trap (Bearish Sweep)</span>
+                      </div>
+                      <div style={{ fontFamily: F.s, fontSize: 12, color: C.t2, lineHeight: 1.4 }}>Price briefly pushed above resistance to shake out buyers, then reversed DOWN. Smart money is selling.</div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ fontFamily: F.s, fontSize: 13, color: C.t3, marginBottom: 16, padding: "12px", background: `${C.bd}33`, borderRadius: 6 }}>
+                  No significant market events detected.
                 </div>
               )}
-            </div>
-            <div style={{ marginTop: 6, borderTop: `1px solid ${C.bd}33`, paddingTop: 5 }}>
-              <DR l="Event Risk" v={s.factors.event_risk?.metadata?.severity || "none"} c={(s.factors.event_risk?.score || 0) < -20 ? C.wa : C.bu} m={false} />
-              <DR l="Next Event" v={s.factors.event_risk?.metadata?.minutes != null ? `${s.factors.event_risk.metadata.minutes} min` : "None near"} />
-            </div>
-          </>) : <NoData />}
-        </Card>
 
-        {/* SYSTEM HEALTH */}
-        <Card title="System & Notifications">
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-            <Dot ok={h?.mt5_connected || false} />
-            <span style={{ fontFamily: F.m, fontSize: 11, color: h?.mt5_connected ? C.bu : C.be }}>{h?.mt5_connected ? "OX Securities Connected" : "MT5 Disconnected"}</span>
-          </div>
-          <DR l="Last Heartbeat" v={h?.mt5_last_heartbeat ? ft(h.mt5_last_heartbeat) : "Never"} c={h?.mt5_connected ? C.t2 : C.be} />
-          <DR l="Last Payload" v={h?.mt5_last_payload ? ft(h.mt5_last_payload) : "Never"} />
-          <DR l="Payloads" v={String(h?.total_payloads || 0)} />
-          <DR l="Open Positions" v={String(h?.open_positions || 0)} c={h?.open_positions ? C.wa : C.t2} />
-          <DR l="Daily P&L" v={fp(h?.daily_pnl || 0)} c={(h?.daily_pnl || 0) >= 0 ? C.bu : C.be} />
-          <DR l="Trade Mode" v={(data?.trade_mode || "—").toUpperCase()} c={data?.trade_mode === "live" ? C.be : C.ac} />
-          <div style={{ marginTop: 8, borderTop: `1px solid ${C.bd}33`, paddingTop: 5 }}>
-            <div style={{ fontFamily: F.s, fontSize: 10, color: C.t3, marginBottom: 4 }}>Notifications</div>
-            <Bdg t={`TG: ${data?.notification_channels?.telegram ? "ON" : "OFF"}`} c={data?.notification_channels?.telegram ? C.bu : C.be} sz="sm" />
-            <button onClick={testTG} style={{ marginLeft: 8, background: "none", border: `1px solid ${C.ac}44`, borderRadius: 4, padding: "3px 8px", cursor: "pointer", fontFamily: F.m, fontSize: 10, color: C.ac }}>Test</button>
-            {tgR && <div style={{ fontFamily: F.m, fontSize: 10, color: tgR.includes("✅") ? C.bu : C.be, marginTop: 4 }}>{tgR}</div>}
-          </div>
-        </Card>
+              {/* Timeframe summary */}
+              <div style={{ fontFamily: F.s, fontSize: 13, color: C.t2, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                <span>Short-term (5 min): <strong style={{ color: structure?.m5Trend === "bullish" ? C.bu : structure?.m5Trend === "bearish" ? C.be : C.nu }}>{translateTrend(structure?.m5Trend || "neutral")}</strong></span>
+                <span style={{ color: C.bd }}>·</span>
+                <span>Medium-term (15 min): <strong style={{ color: structure?.m15Trend === "bullish" ? C.bu : structure?.m15Trend === "bearish" ? C.be : C.nu }}>{translateTrend(structure?.m15Trend || "neutral")}</strong></span>
+                <span style={{ color: C.bd }}>·</span>
+                <span>Longer-term (1 hour): <strong style={{ color: structure?.h1Bias === "bullish" ? C.bu : structure?.h1Bias === "bearish" ? C.be : C.nu }}>{translateTrend(structure?.h1Bias || "neutral")}</strong></span>
+              </div>
+            </div>
 
-        {/* ALERTS */}
-        <Card title="Alerts Feed">
-          {alerts.length === 0 ? <div style={{ fontFamily: F.m, fontSize: 11, color: C.t3, textAlign: "center", padding: 20 }}>Monitoring...</div> : (
-            <div style={{ maxHeight: 260, overflowY: "auto" }}>
-              {alerts.map((a, i) => (
-                <div key={a.id || i} style={{ padding: "5px 0", borderBottom: `1px solid ${C.bd}22` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
-                    <Bdg t={sl(a.signal_state)} c={stC(a.signal_state)} sz="sm" />
-                    <span style={{ fontFamily: F.m, fontSize: 9, color: C.t3 }}>{ft(a.timestamp)}</span>
+            {/* ============================================================ */}
+            {/* SECTION 3 — INDICATOR STRENGTH BARS */}
+            {/* ============================================================ */}
+            <div style={{ background: C.cd, borderRadius: 8, border: `1px solid ${C.bd}`, padding: "16px 18px" }}>
+              <div style={{ fontFamily: F.s, fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t2, marginBottom: 14 }}>How Strong Is the Signal?</div>
+
+              {indMatrix ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  {/* Trend Strength */}
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <div>
+                        <span style={{ fontFamily: F.s, fontSize: 14, fontWeight: 600, color: C.tx }}>Trend Strength</span>
+                        <span style={{ fontFamily: F.s, fontSize: 11, color: C.t3, marginLeft: 8 }}>Are the main moving averages pointing the same direction?</span>
+                      </div>
+                      <span style={{ fontFamily: F.m, fontSize: 14, fontWeight: 700, color: indMatrix.trendScore > 15 ? C.bu : indMatrix.trendScore < -15 ? C.be : C.nu }}>{indMatrix.trendScore > 0 ? "+" : ""}{indMatrix.trendScore.toFixed(0)}</span>
+                    </div>
+                    <FBar label="" score={indMatrix.trendScore} />
                   </div>
-                  <div style={{ fontFamily: F.m, fontSize: 10, color: C.t2 }}>{a.trigger_reason}</div>
-                  <div style={{ fontFamily: F.m, fontSize: 9, color: C.t3 }}>Score: {a.master_score?.toFixed(1)}</div>
+
+                  {/* Momentum */}
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <div>
+                        <span style={{ fontFamily: F.s, fontSize: 14, fontWeight: 600, color: C.tx }}>Momentum</span>
+                        <span style={{ fontFamily: F.s, fontSize: 11, color: C.t3, marginLeft: 8 }}>Is price accelerating or slowing down?</span>
+                      </div>
+                      <span style={{ fontFamily: F.m, fontSize: 14, fontWeight: 700, color: indMatrix.momentumScore > 15 ? C.bu : indMatrix.momentumScore < -15 ? C.be : C.nu }}>{indMatrix.momentumScore > 0 ? "+" : ""}{indMatrix.momentumScore.toFixed(0)}</span>
+                    </div>
+                    <FBar label="" score={indMatrix.momentumScore} />
+                  </div>
+
+                  {/* Market Activity (Volatility 0-100) */}
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <div>
+                        <span style={{ fontFamily: F.s, fontSize: 14, fontWeight: 600, color: C.tx }}>Market Activity</span>
+                        <span style={{ fontFamily: F.s, fontSize: 11, color: C.t3, marginLeft: 8 }}>How much is price moving? Higher = more opportunities, higher risk.</span>
+                      </div>
+                      <span style={{ fontFamily: F.m, fontSize: 14, fontWeight: 700, color: C.wa }}>{indMatrix.volatilityScore.toFixed(0)}/100</span>
+                    </div>
+                    <div style={{ height: 8, background: C.bd, borderRadius: 4, overflow: "hidden" }}>
+                      <div style={{ width: `${indMatrix.volatilityScore}%`, height: "100%", background: `linear-gradient(90deg, ${C.wa}66, ${C.wa})`, borderRadius: 4, transition: "width 0.5s" }} />
+                    </div>
+                  </div>
+
+                  {/* Market Participation */}
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <div>
+                        <span style={{ fontFamily: F.s, fontSize: 14, fontWeight: 600, color: C.tx }}>Market Participation</span>
+                        <span style={{ fontFamily: F.s, fontSize: 11, color: C.t3, marginLeft: 8 }}>Is volume and price action confirming the move?</span>
+                      </div>
+                      <span style={{ fontFamily: F.m, fontSize: 14, fontWeight: 700, color: indMatrix.participationScore > 15 ? C.bu : indMatrix.participationScore < -15 ? C.be : C.nu }}>{indMatrix.participationScore > 0 ? "+" : ""}{indMatrix.participationScore.toFixed(0)}</span>
+                    </div>
+                    <FBar label="" score={indMatrix.participationScore} />
+                  </div>
+
+                  {/* Overall Bot Bias — with verdict */}
+                  <div style={{ background: `${biasVerdict.color}0d`, border: `1px solid ${biasVerdict.color}33`, borderRadius: 6, padding: "12px 14px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <div>
+                        <span style={{ fontFamily: F.s, fontSize: 14, fontWeight: 700, color: C.tx }}>Overall Bot Bias</span>
+                        <span style={{ fontFamily: F.s, fontSize: 11, color: C.t3, marginLeft: 8 }}>Combined read of all signals.</span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontFamily: F.m, fontSize: 16, fontWeight: 800, color: biasVerdict.color }}>{indMatrix.overallBias > 0 ? "+" : ""}{indMatrix.overallBias.toFixed(0)}</span>
+                        <span style={{ fontFamily: F.s, fontSize: 12, fontWeight: 700, color: biasVerdict.color, background: `${biasVerdict.color}1a`, padding: "4px 10px", borderRadius: 4 }}>{biasVerdict.text}</span>
+                      </div>
+                    </div>
+                    <FBar label="" score={indMatrix.overallBias} />
+                  </div>
+
+                  {/* Divergence warnings */}
+                  {indMatrix.divergenceWarnings && indMatrix.divergenceWarnings.length > 0 && (
+                    <div style={{ background: `${C.wa}12`, border: `1px solid ${C.wa}33`, borderRadius: 6, padding: "12px 14px" }}>
+                      <div style={{ fontFamily: F.s, fontSize: 13, fontWeight: 700, color: C.wa, marginBottom: 6 }}>⚠ Warning: Conflicting Signals</div>
+                      {indMatrix.divergenceWarnings.map((w, i) => (
+                        <div key={i} style={{ fontFamily: F.s, fontSize: 12, color: C.t2, marginTop: 4 }}>{w}</div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
+              ) : (
+                <NoData />
+              )}
             </div>
-          )}
-        </Card>
 
-        {/* SCAN HISTORY */}
-        <Card title="Scan History" span={2}>
-          {scans.length === 0 ? <div style={{ fontFamily: F.m, fontSize: 11, color: C.t3, textAlign: "center", padding: 20 }}>No scans yet</div> : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: F.m, fontSize: 10 }}>
-                <thead><tr style={{ borderBottom: `1px solid ${C.bd}` }}>
-                  {["Time", "Score", "State", "Bull%", "Conf", "Risk", "Alert", "Qual"].map(x => <th key={x} style={{ padding: "4px 5px", textAlign: "left", color: C.t3, fontWeight: 500, fontSize: 9, whiteSpace: "nowrap" }}>{x}</th>)}
-                </tr></thead>
-                <tbody>
-                  {scans.slice(0, 20).map((x, i) => (
-                    <tr key={i} style={{ borderBottom: `1px solid ${C.bd}15` }}>
-                      <td style={{ padding: "3px 5px", color: C.t2, whiteSpace: "nowrap" }}>{ft(x.timestamp)}</td>
-                      <td style={{ padding: "3px 5px", color: scC(x.master_score), fontWeight: 600 }}>{x.master_score > 0 ? "+" : ""}{x.master_score.toFixed(1)}</td>
-                      <td style={{ padding: "3px 5px" }}><Bdg t={sl(x.state)} c={stC(x.state)} /></td>
-                      <td style={{ padding: "3px 5px", color: C.bu }}>{(x.bull_probability * 100).toFixed(0)}%</td>
-                      <td style={{ padding: "3px 5px", color: x.confidence_pct > 0.65 ? C.bu : C.wa }}>{x.confidence_label}</td>
-                      <td style={{ padding: "3px 5px", color: x.risk_level === "low" ? C.bu : C.wa }}>{x.risk_level}</td>
-                      <td style={{ padding: "3px 5px" }}>{x.alert_fired ? <Bdg t="✓" c={C.ac} /> : "—"}</td>
-                      <td style={{ padding: "3px 5px", color: x.data_quality === "full" ? C.bu : C.wa }}>{x.data_quality}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            {/* ============================================================ */}
+            {/* SECTION 4 — TRADE PANEL + OPEN POSITIONS */}
+            {/* ============================================================ */}
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 3fr) minmax(0, 2fr)", gap: 12 }}>
+              {/* Left column — Execute a Trade */}
+              <div style={{ background: C.cd, borderRadius: 8, border: `1px solid ${C.bd}`, padding: "16px 18px" }}>
+                <div style={{ fontFamily: F.s, fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t2, marginBottom: 12 }}>Execute a Trade</div>
+
+                {/* Recommendation tooltip */}
+                <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 6, background: s?.no_trade ? `${C.wa}0d` : sigDir === "buy" ? `${C.bu}0d` : sigDir === "sell" ? `${C.be}0d` : `${C.nu}0d`, border: `1px solid ${s?.no_trade ? C.wa : sigDir === "buy" ? C.bu : sigDir === "sell" ? C.be : C.nu}22` }}>
+                  {s?.no_trade ? (
+                    <span style={{ fontFamily: F.s, fontSize: 12, color: C.wa }}>⊘ The bot recommends NO trade right now. Reason: {s.no_trade_reason || "Market unclear"}</span>
+                  ) : sigDir === "buy" ? (
+                    <span style={{ fontFamily: F.s, fontSize: 12, color: C.bu }}>💡 The bot recommends BUYING based on current signals.</span>
+                  ) : sigDir === "sell" ? (
+                    <span style={{ fontFamily: F.s, fontSize: 12, color: C.be }}>💡 The bot recommends SELLING based on current signals.</span>
+                  ) : (
+                    <span style={{ fontFamily: F.s, fontSize: 12, color: C.nu }}>→ No strong signal either way. Manual discretion.</span>
+                  )}
+                </div>
+
+                <TradePanel signal={s ?? null} account={acct} tradeMode={data?.trade_mode || "paper"} onTrade={sendTrade} />
+              </div>
+
+              {/* Right column — Open Trades */}
+              <div style={{ background: C.cd, borderRadius: 8, border: `1px solid ${C.bd}`, padding: "16px 18px" }}>
+                <div style={{ fontFamily: F.s, fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: C.t2, marginBottom: 12 }}>Open Trades</div>
+
+                {(positions.length + (data?.trade_history?.filter((t: any) => t.status === "filled" && t.mode === "paper").length || 0)) === 0 ? (
+                  <div style={{ textAlign: "center", padding: "32px 16px" }}>
+                    <div style={{ fontFamily: F.s, fontSize: 14, color: C.t2, marginBottom: 6 }}>No open trades right now.</div>
+                    <div style={{ fontFamily: F.s, fontSize: 12, color: C.t3 }}>When the bot opens a trade, it will appear here with live profit/loss.</div>
+                  </div>
+                ) : (
+                  <PositionsPanel
+                    positions={positions}
+                    paperTrades={data?.trade_history?.filter((t: any) => t.mode === "paper")}
+                    currentBid={s?.bid || 0}
+                    onClose={closePosition}
+                    onModify={modifyPosition}
+                    onBreakeven={breakevenPosition}
+                  />
+                )}
+              </div>
             </div>
-          )}
-        </Card>
 
-      </div>}
+            {/* ============================================================ */}
+            {/* SECTION 5 — ACCOUNT + STATUS BAR */}
+            {/* ============================================================ */}
+            <div style={{ background: C.cd, borderRadius: 8, border: `1px solid ${C.bd}`, padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+              {/* Group 1 — Account Health */}
+              <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
+                <div>
+                  <div style={{ fontFamily: F.s, fontSize: 10, color: C.t3, marginBottom: 2 }}>Balance</div>
+                  <div style={{ fontFamily: F.m, fontSize: 14, fontWeight: 700, color: C.tx }}>${acct?.balance?.toFixed(2) || "—"}</div>
+                </div>
+                <div>
+                  <div style={{ fontFamily: F.s, fontSize: 10, color: C.t3, marginBottom: 2 }}>Equity</div>
+                  <div style={{ fontFamily: F.m, fontSize: 14, fontWeight: 700, color: acct && acct.equity >= acct.balance ? C.bu : C.be }}>${acct?.equity?.toFixed(2) || "—"}</div>
+                </div>
+                <div>
+                  <div style={{ fontFamily: F.s, fontSize: 10, color: C.t3, marginBottom: 2 }}>Open P&L</div>
+                  <div style={{ fontFamily: F.m, fontSize: 14, fontWeight: 700, color: (acct?.profit || 0) >= 0 ? C.bu : C.be }}>{fp(acct?.profit || 0)}</div>
+                </div>
+              </div>
+
+              <div style={{ width: 1, height: 36, background: C.bd }} />
+
+              {/* Group 2 — Bot Status */}
+              <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: h?.mt5_connected ? C.bu : C.be, boxShadow: `0 0 6px ${h?.mt5_connected ? C.bu : C.be}66` }} />
+                  <div>
+                    <div style={{ fontFamily: F.s, fontSize: 10, color: C.t3 }}>MT5 Connection</div>
+                    <div style={{ fontFamily: F.m, fontSize: 12, fontWeight: 600, color: h?.mt5_connected ? C.bu : C.be }}>{h?.mt5_connected ? "Connected" : "Disconnected"}</div>
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontFamily: F.s, fontSize: 10, color: C.t3 }}>Last Data</div>
+                  <div style={{ fontFamily: F.m, fontSize: 12, fontWeight: 600, color: lastDataAge > 60 ? C.be : lastDataAge > 30 ? C.wa : C.t2 }}>{lastDataAge < 999 ? `${lastDataAge}s ago` : "—"}</div>
+                </div>
+                <div>
+                  <div style={{ fontFamily: F.s, fontSize: 10, color: C.t3 }}>Trade Mode</div>
+                  <div style={{ fontFamily: F.m, fontSize: 12, fontWeight: 700, color: data?.trade_mode === "live" ? C.be : C.wa }}>{(data?.trade_mode || "—").toUpperCase()}</div>
+                </div>
+              </div>
+
+              <div style={{ width: 1, height: 36, background: C.bd }} />
+
+              {/* Group 3 — Quick Stats */}
+              <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
+                <div>
+                  <div style={{ fontFamily: F.s, fontSize: 10, color: C.t3 }}>Scans today</div>
+                  <div style={{ fontFamily: F.m, fontSize: 14, fontWeight: 600, color: C.t2 }}>{scans.length}</div>
+                </div>
+                <div>
+                  <div style={{ fontFamily: F.s, fontSize: 10, color: C.t3 }}>Alerts fired</div>
+                  <div style={{ fontFamily: F.m, fontSize: 14, fontWeight: 600, color: C.t2 }}>{alerts.length}</div>
+                </div>
+                <div>
+                  <div style={{ fontFamily: F.s, fontSize: 10, color: C.t3 }}>Open trades</div>
+                  <div style={{ fontFamily: F.m, fontSize: 14, fontWeight: 600, color: positions.length > 0 ? C.wa : C.t2 }}>{positions.length}</div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        );
+      })()}
 
       {activeTab === "gold_v2" && data?.gold_v2 && (
         <GoldV2Panel v2={data.gold_v2} />
