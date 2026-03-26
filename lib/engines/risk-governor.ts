@@ -7,6 +7,7 @@
 import type {
   TradeRecord, RegimeState, RiskGovernorState
 } from "../types";
+import { RISK_LIMITS } from "../config/thresholds";
 
 // Configuration
 const MAX_TRADES_PER_DIRECTION = 2;        // Max open trades in one direction
@@ -126,6 +127,84 @@ function checkRegimeInvalidation(regime: RegimeState): boolean {
 }
 
 // ============================================================
+// PROFIT LOCK CHECK
+// ============================================================
+
+/**
+ * Check if existing same-direction trades are in sufficient profit
+ * before allowing new same-direction entry (profit lock).
+ */
+function checkProfitLock(
+  openTrades: TradeRecord[],
+  direction: "buy" | "sell",
+): { required: boolean; allowed: boolean; reason?: string } {
+  const sameDirTrades = openTrades.filter(
+    t => t.direction === direction && t.status === "filled"
+  );
+
+  // No existing trades = no profit lock required
+  if (sameDirTrades.length === 0) {
+    return { required: false, allowed: true };
+  }
+
+  // Check if all existing trades are at least MIN_R profit
+  for (const trade of sameDirTrades) {
+    const riskAmount = Math.abs(trade.entry_price - trade.sl);
+    if (riskAmount <= 0) continue;
+
+    const currentProfit = trade.profit || 0;
+    const entryRisk = riskAmount * trade.volume;
+    const rMultiple = entryRisk > 0 ? currentProfit / entryRisk : 0;
+
+    if (rMultiple < RISK_LIMITS.PROFIT_LOCK_MIN_R) {
+      return {
+        required: true,
+        allowed: false,
+        reason: `Profit lock: existing ${direction} at ${rMultiple.toFixed(2)}R (need ${RISK_LIMITS.PROFIT_LOCK_MIN_R}R)`,
+      };
+    }
+  }
+
+  return { required: true, allowed: true };
+}
+
+// ============================================================
+// STOP SIZE VALIDATION
+// ============================================================
+
+/**
+ * Validate that the stop loss distance doesn't exceed max percentage of account.
+ */
+function checkStopSizeValid(
+  slDistance: number,
+  balance: number,
+  riskPct: number,
+  lotSize: number,
+): { valid: boolean; maxAllowed: number; reason?: string } {
+  if (balance <= 0 || slDistance <= 0) {
+    return { valid: true, maxAllowed: 0 };
+  }
+
+  // Calculate the risk in dollars for this SL distance
+  // Assuming standard lot size for gold (100 oz)
+  const pipValue = 0.01; // Simplified, actual would depend on lot size
+  const riskDollars = slDistance * lotSize * 100; // Approximate for gold
+  const riskPctActual = (riskDollars / balance) * 100;
+
+  const maxAllowed = balance * (RISK_LIMITS.STOP_SIZE_MAX_PCT / 100);
+
+  if (riskPctActual > RISK_LIMITS.STOP_SIZE_MAX_PCT) {
+    return {
+      valid: false,
+      maxAllowed,
+      reason: `Stop size exceeds limit: ${riskPctActual.toFixed(2)}% > ${RISK_LIMITS.STOP_SIZE_MAX_PCT}%`,
+    };
+  }
+
+  return { valid: true, maxAllowed };
+}
+
+// ============================================================
 // MAIN RISK GOVERNOR
 // ============================================================
 
@@ -134,6 +213,9 @@ export function runRiskGovernor(
   regime: RegimeState,
   dailyPnL: number,
   balance: number,
+  proposedSlDistance?: number,
+  proposedDirection?: "buy" | "sell",
+  proposedLotSize?: number,
 ): RiskGovernorState {
   const reasons: string[] = [];
 
@@ -144,6 +226,44 @@ export function runRiskGovernor(
   // Wrong-side basket detection
   const wrongSide = detectWrongSideBasket(openTrades, regime);
   if (wrongSide.wrongSideFreeze) reasons.push(...wrongSide.reasons);
+
+  // NEW: Profit lock checks
+  let profitLockRequired = false;
+  let buyProfitLockBlocked = false;
+  let sellProfitLockBlocked = false;
+
+  const buyProfitLock = checkProfitLock(openTrades, "buy");
+  if (buyProfitLock.required) {
+    profitLockRequired = true;
+    if (!buyProfitLock.allowed && buyProfitLock.reason) {
+      buyProfitLockBlocked = true;
+      reasons.push(buyProfitLock.reason);
+    }
+  }
+
+  const sellProfitLock = checkProfitLock(openTrades, "sell");
+  if (sellProfitLock.required) {
+    profitLockRequired = true;
+    if (!sellProfitLock.allowed && sellProfitLock.reason) {
+      sellProfitLockBlocked = true;
+      reasons.push(sellProfitLock.reason);
+    }
+  }
+
+  // NEW: Stop size validation
+  let stopSizeExceedsLimit = false;
+  if (proposedSlDistance && proposedSlDistance > 0) {
+    const stopCheck = checkStopSizeValid(
+      proposedSlDistance,
+      balance,
+      RISK_LIMITS.MAX_RISK_PCT,
+      proposedLotSize || 0.01,
+    );
+    if (!stopCheck.valid && stopCheck.reason) {
+      stopSizeExceedsLimit = true;
+      reasons.push(stopCheck.reason);
+    }
+  }
 
   // Daily loss lock
   const dailyLoss = checkDailyLossLock(dailyPnL, balance);
@@ -197,6 +317,16 @@ export function runRiskGovernor(
     blockBuy = true;
     buyBlockReasons.push(`Regime (${regime.regime}) does not allow BUY`);
   }
+  // NEW: Profit lock block
+  if (buyProfitLockBlocked) {
+    blockBuy = true;
+    buyBlockReasons.push(buyProfitLock.reason!);
+  }
+  // NEW: Stop size block (if direction is buy)
+  if (proposedDirection === "buy" && stopSizeExceedsLimit) {
+    blockBuy = true;
+    buyBlockReasons.push("Stop size exceeds account limit");
+  }
 
   // Compile sell blocks
   let blockSell = false;
@@ -230,6 +360,16 @@ export function runRiskGovernor(
     blockSell = true;
     sellBlockReasons.push(`Regime (${regime.regime}) does not allow SELL`);
   }
+  // NEW: Profit lock block
+  if (sellProfitLockBlocked) {
+    blockSell = true;
+    sellBlockReasons.push(sellProfitLock.reason!);
+  }
+  // NEW: Stop size block (if direction is sell)
+  if (proposedDirection === "sell" && stopSizeExceedsLimit) {
+    blockSell = true;
+    sellBlockReasons.push("Stop size exceeds account limit");
+  }
 
   const blockAllEntries = dailyLoss.locked || regimeFreeze || maxExposureReached;
 
@@ -245,5 +385,8 @@ export function runRiskGovernor(
     reasons: [...new Set([...reasons, ...buyBlockReasons, ...sellBlockReasons])],
     openBuys,
     openSells,
+    // NEW fields
+    profitLockRequired,
+    stopSizeExceedsLimit,
   };
 }

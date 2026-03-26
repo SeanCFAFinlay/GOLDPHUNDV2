@@ -17,6 +17,7 @@ import { runEntryQualityEngine } from "./entry-quality-engine";
 import { runRiskGovernor } from "./risk-governor";
 import { buildTradePermission } from "./trade-permission-engine";
 import { buildExplanation } from "./explanation-engine";
+import { runExhaustionTrapEngine } from "./exhaustion-trap-engine";
 
 export interface V2PipelineOptions {
   openTrades?: TradeRecord[];
@@ -56,6 +57,20 @@ export function runGoldV2Pipeline(
   // Step 4: Regime Engine
   const regime = runRegimeEngine(primaryBars, structure, spreadGate, dataIntegrity);
 
+  // Step 4.5: Exhaustion/Anti-trap Engine
+  const indicatorMatrixForExhaustion = runIndicatorMatrix(
+    primaryBars,
+    payload.prev_day_high,
+    payload.prev_day_low,
+    payload.prev_day_close,
+  );
+  const exhaustionTrap = runExhaustionTrapEngine(
+    primaryBars,
+    structure,
+    regime,
+    indicatorMatrixForExhaustion,
+  );
+
   // Step 5: Indicator Matrix
   const indicatorMatrix = runIndicatorMatrix(
     primaryBars,
@@ -74,6 +89,7 @@ export function runGoldV2Pipeline(
     indicatorMatrix,
     payload.prev_day_high,
     payload.prev_day_low,
+    exhaustionTrap,
   );
 
   // Step 7: Risk Governor
@@ -98,6 +114,7 @@ export function runGoldV2Pipeline(
     entryQuality,
     riskGovernor,
     tradePermission,
+    exhaustionTrap,
   );
 
   return {
@@ -111,6 +128,7 @@ export function runGoldV2Pipeline(
     riskGovernor,
     tradePermission,
     explanation,
+    exhaustionTrap,
   };
 }
 

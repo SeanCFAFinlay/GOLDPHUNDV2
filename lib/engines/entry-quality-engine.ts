@@ -6,8 +6,11 @@
 
 import type {
   Bar, RegimeState, StructureState, SpreadGateState,
-  IndicatorMatrix, EntryQualityState
+  IndicatorMatrix, EntryQualityState, ExhaustionTrapState
 } from "../types";
+import { atr } from "../math/indicators";
+import { ENTRY_CONDITIONS } from "../config/thresholds";
+
 // Thresholds
 const MIN_TARGET_SPACE_ATR = 1.0;      // Target must be at least 1 ATR away
 const MIN_RR_AFTER_SPREAD = 1.5;       // Minimum RR after factoring spread cost
@@ -139,6 +142,187 @@ function checkPullbackValid(
   }
 }
 
+// ============================================================
+// NEW: LOWER HIGH CONFIRMATION CHECK
+// ============================================================
+
+/**
+ * For short entries: confirms that we have a valid lower high.
+ * LH must be at least 0.2 ATR below prior swing high.
+ */
+function checkLowerHighConfirmed(
+  structure: StructureState,
+  bars: Bar[],
+): { confirmed: boolean; reason?: string } {
+  // For sells, we want to see a lower high in structure
+  if (!structure.lowerHigh) {
+    return { confirmed: false, reason: "No lower high confirmed in structure" };
+  }
+
+  // Verify the LH is meaningful (not just noise)
+  if (!structure.lastSwingHigh || !structure.prevSwingHigh) {
+    return { confirmed: false, reason: "Insufficient swing highs for LH confirmation" };
+  }
+
+  const currentATR = computeCurrentATR(bars);
+  const lhBuffer = currentATR * ENTRY_CONDITIONS.LH_CONFIRMATION_BUFFER_ATR;
+  const difference = structure.prevSwingHigh - structure.lastSwingHigh;
+
+  if (difference < lhBuffer) {
+    return {
+      confirmed: false,
+      reason: `LH not significant: only ${difference.toFixed(2)} below prior (need ${lhBuffer.toFixed(2)})`,
+    };
+  }
+
+  return { confirmed: true };
+}
+
+/**
+ * For long entries: confirms that we have a valid higher low.
+ * HL must be at least 0.2 ATR above prior swing low.
+ */
+function checkHigherLowConfirmed(
+  structure: StructureState,
+  bars: Bar[],
+): { confirmed: boolean; reason?: string } {
+  if (!structure.higherLow) {
+    return { confirmed: false, reason: "No higher low confirmed in structure" };
+  }
+
+  if (!structure.lastSwingLow || !structure.prevSwingLow) {
+    return { confirmed: false, reason: "Insufficient swing lows for HL confirmation" };
+  }
+
+  const currentATR = computeCurrentATR(bars);
+  const hlBuffer = currentATR * ENTRY_CONDITIONS.HH_CONFIRMATION_BUFFER_ATR;
+  const difference = structure.lastSwingLow - structure.prevSwingLow;
+
+  if (difference < hlBuffer) {
+    return {
+      confirmed: false,
+      reason: `HL not significant: only ${difference.toFixed(2)} above prior (need ${hlBuffer.toFixed(2)})`,
+    };
+  }
+
+  return { confirmed: true };
+}
+
+// ============================================================
+// NEW: BREAKDOWN CANDLE VALIDATION
+// ============================================================
+
+/**
+ * Validates that the entry candle is a proper breakdown candle.
+ * For sells: bearish body > 60% of range, close breaks level by 30% ATR
+ */
+function checkBreakdownCandle(
+  bars: Bar[],
+  direction: "buy" | "sell",
+  structure: StructureState,
+): { valid: boolean; reason?: string } {
+  if (bars.length < 3) {
+    return { valid: false, reason: "Insufficient bars for breakdown validation" };
+  }
+
+  const last = bars[bars.length - 1];
+  const range = last.high - last.low;
+  const body = Math.abs(last.close - last.open);
+  const bodyPct = range > 0 ? body / range : 0;
+
+  const currentATR = computeCurrentATR(bars);
+  const breakBeyond = currentATR * ENTRY_CONDITIONS.BREAKDOWN_CLOSE_BEYOND_ATR_PCT;
+
+  if (direction === "sell") {
+    // Bearish breakdown candle
+    const isBearish = last.close < last.open;
+    if (!isBearish) {
+      return { valid: false, reason: "Not a bearish candle" };
+    }
+
+    if (bodyPct < ENTRY_CONDITIONS.BREAKDOWN_BODY_MIN_PCT) {
+      return {
+        valid: false,
+        reason: `Weak breakdown: body ${(bodyPct * 100).toFixed(0)}% < ${ENTRY_CONDITIONS.BREAKDOWN_BODY_MIN_PCT * 100}%`,
+      };
+    }
+
+    // Check if close breaks below the swing low
+    if (structure.lastSwingLow && last.close > structure.lastSwingLow - breakBeyond) {
+      return { valid: false, reason: "Close not convincingly below swing low" };
+    }
+
+    return { valid: true };
+  } else {
+    // Bullish breakout candle
+    const isBullish = last.close > last.open;
+    if (!isBullish) {
+      return { valid: false, reason: "Not a bullish candle" };
+    }
+
+    if (bodyPct < ENTRY_CONDITIONS.BREAKDOWN_BODY_MIN_PCT) {
+      return {
+        valid: false,
+        reason: `Weak breakout: body ${(bodyPct * 100).toFixed(0)}% < ${ENTRY_CONDITIONS.BREAKDOWN_BODY_MIN_PCT * 100}%`,
+      };
+    }
+
+    if (structure.lastSwingHigh && last.close < structure.lastSwingHigh + breakBeyond) {
+      return { valid: false, reason: "Close not convincingly above swing high" };
+    }
+
+    return { valid: true };
+  }
+}
+
+// ============================================================
+// NEW: EXHAUSTION TRAP CHECK
+// ============================================================
+
+function checkNotInExhaustionTrap(
+  exhaustion: ExhaustionTrapState | undefined,
+  direction: "buy" | "sell",
+): { ok: boolean; reason?: string } {
+  if (!exhaustion) {
+    return { ok: true };
+  }
+
+  if (direction === "sell" && exhaustion.blockShort) {
+    return {
+      ok: false,
+      reason: exhaustion.reasons.find(r => r.includes("Block SHORT")) || "Exhaustion trap blocks short",
+    };
+  }
+
+  if (direction === "buy" && exhaustion.blockLong) {
+    return {
+      ok: false,
+      reason: exhaustion.reasons.find(r => r.includes("Block LONG")) || "Exhaustion trap blocks long",
+    };
+  }
+
+  return { ok: true };
+}
+
+// ============================================================
+// NEW: CONSOLIDATION TRAP CHECK
+// ============================================================
+
+function checkNotInConsolidationTrap(
+  structure: StructureState,
+  exhaustion: ExhaustionTrapState | undefined,
+): { ok: boolean; reason?: string } {
+  // If we're in consolidation after a large impulse, it's risky to enter continuation
+  if (structure.consolidationDetected && exhaustion?.isExhausted) {
+    return {
+      ok: false,
+      reason: `Consolidation trap: ${structure.consolidationBars} bars post-exhaustion`,
+    };
+  }
+
+  return { ok: true };
+}
+
 export function runEntryQualityEngine(
   direction: "buy" | "sell" | null,
   bars: Bar[],
@@ -148,6 +332,7 @@ export function runEntryQualityEngine(
   indicatorMatrix: IndicatorMatrix,
   prevDayHigh?: number,
   prevDayLow?: number,
+  exhaustionTrap?: ExhaustionTrapState,
 ): EntryQualityState {
   const blockReasons: string[] = [];
   const reasons: string[] = [];
@@ -229,6 +414,37 @@ export function runEntryQualityEngine(
     if (adverseDivergences.length > 0) {
       blockReasons.push(...adverseDivergences.map(d => `Adverse divergence: ${d}`));
     }
+  }
+
+  // --- NEW: Lower high / higher low confirmation ---
+  if (direction === "sell") {
+    const lhCheck = checkLowerHighConfirmed(structure, bars);
+    if (!lhCheck.confirmed && lhCheck.reason) {
+      reasons.push(lhCheck.reason); // Warning, not block
+    }
+  } else if (direction === "buy") {
+    const hlCheck = checkHigherLowConfirmed(structure, bars);
+    if (!hlCheck.confirmed && hlCheck.reason) {
+      reasons.push(hlCheck.reason);
+    }
+  }
+
+  // --- NEW: Breakdown candle validation ---
+  const breakdownCheck = checkBreakdownCandle(bars, direction, structure);
+  if (!breakdownCheck.valid && breakdownCheck.reason) {
+    reasons.push(breakdownCheck.reason);
+  }
+
+  // --- NEW: Exhaustion trap check ---
+  const exhaustionCheck = checkNotInExhaustionTrap(exhaustionTrap, direction);
+  if (!exhaustionCheck.ok && exhaustionCheck.reason) {
+    blockReasons.push(exhaustionCheck.reason);
+  }
+
+  // --- NEW: Consolidation trap check ---
+  const consolidationCheck = checkNotInConsolidationTrap(structure, exhaustionTrap);
+  if (!consolidationCheck.ok && consolidationCheck.reason) {
+    blockReasons.push(consolidationCheck.reason);
   }
 
   // --- Entry quality score ---

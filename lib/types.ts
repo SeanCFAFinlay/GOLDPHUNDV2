@@ -331,6 +331,14 @@ export type StructureTrend = "bullish" | "bearish" | "range";
 
 export interface SwingPoint { price: number; index: number; time?: string; }
 
+/** Swing point classification (HH, HL, LH, LL) */
+export interface SwingClassification {
+  type: "HH" | "HL" | "LH" | "LL";
+  price: number;
+  index: number;
+  time?: string;
+}
+
 export interface StructureState {
   m5Trend: StructureTrend;
   m15Trend: StructureTrend;
@@ -349,6 +357,14 @@ export interface StructureState {
   bullishBias: boolean;
   bearishBias: boolean;
   notes: string[];
+  // --- NEW: Explicit swing classification flags ---
+  lowerHigh: boolean;           // Most recent swing high is LH
+  higherLow: boolean;           // Most recent swing low is HL
+  lowerLow: boolean;            // Most recent swing low is LL
+  higherHigh: boolean;          // Most recent swing high is HH
+  swingSequence: SwingClassification[];
+  consolidationDetected: boolean;
+  consolidationBars: number;
 }
 
 // --- Regime Engine ---
@@ -369,6 +385,9 @@ export interface RegimeState {
   noTrade: boolean;
   reasons: string[];
   warnings: string[];
+  // --- NEW: EMA slope and HTF alignment ---
+  emaSlope: number;       // EMA50 slope value (price change per bar)
+  htfAligned: boolean;    // H1 and M10 agree on direction
 }
 
 // --- Indicator Matrix ---
@@ -409,6 +428,27 @@ export interface RiskGovernorState {
   reasons: string[];
   openBuys: number;
   openSells: number;
+  // --- NEW: Profit lock and stop size validation ---
+  profitLockRequired: boolean;
+  stopSizeExceedsLimit: boolean;
+}
+
+// --- Exhaustion Trap Engine ---
+export interface ExhaustionTrapState {
+  impulseDetected: boolean;
+  impulseDirection: "up" | "down" | null;
+  impulseSize: number;              // ATR multiple
+  isExhausted: boolean;             // True if oversized impulse
+  inConsolidation: boolean;         // Post-impulse consolidation
+  consolidationBars: number;
+  emaReclaimed: boolean;            // Price reclaimed EMA20
+  vwapReclaimed: boolean;           // Price reclaimed VWAP
+  bullishDivergence: boolean;       // RSI making HL while price makes LL
+  bearishDivergence: boolean;       // RSI making LH while price makes HH
+  blockShort: boolean;              // CRITICAL: Block shorts in this state
+  blockLong: boolean;               // Block longs in exhaustion-up
+  reasons: string[];
+  trapScore: number;                // 0-100, higher = more likely trap
 }
 
 // --- Trade Permission (final gate) ---
@@ -445,6 +485,17 @@ export interface ExplanationOutput {
   dataIntegrityIssues: string[];
   cooldownActive: boolean;
   cooldownBarsLeft: number;
+  // --- NEW: Debug panel for complete decision trace ---
+  debugPanel?: {
+    regimeState: string;
+    structureState: string;
+    antiTrapState: string;
+    divergenceState: string;
+    spreadGateState: string;
+    exhaustionState: string;
+    finalDecision: string;
+    decisionReasons: string[];
+  };
 }
 
 // --- V2 Pipeline Output (attached to market response) ---
@@ -459,4 +510,6 @@ export interface GoldV2State {
   riskGovernor: RiskGovernorState;
   tradePermission: TradePermission;
   explanation: ExplanationOutput;
+  // --- NEW: Exhaustion trap state ---
+  exhaustionTrap: ExhaustionTrapState;
 }

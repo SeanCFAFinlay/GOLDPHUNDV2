@@ -5,7 +5,9 @@
 // This engine is a PRIMARY DIRECTIONAL AUTHORITY.
 // ============================================================
 
-import type { Bar, StructureState, StructureTrend, SwingPoint } from "../types";
+import type { Bar, StructureState, StructureTrend, SwingPoint, SwingClassification } from "../types";
+import { EXHAUSTION, STRUCTURE } from "../config/thresholds";
+import { atr } from "../math/indicators";
 
 const SWING_LOOKBACK = 3; // Bars on each side to confirm swing point
 
@@ -55,6 +57,93 @@ function classifySwingLows(swingLows: SwingPoint[]): { hl: boolean; ll: boolean 
   const last = swingLows[swingLows.length - 1].price;
   const prev = swingLows[swingLows.length - 2].price;
   return { hl: last > prev, ll: last < prev };
+}
+
+// ============================================================
+// SWING SEQUENCE BUILDER
+// ============================================================
+
+function buildSwingSequence(
+  swingHighs: SwingPoint[],
+  swingLows: SwingPoint[],
+): SwingClassification[] {
+  const sequence: SwingClassification[] = [];
+
+  // Classify all swing highs
+  for (let i = 1; i < swingHighs.length; i++) {
+    const curr = swingHighs[i];
+    const prev = swingHighs[i - 1];
+    const type: "HH" | "LH" = curr.price > prev.price ? "HH" : "LH";
+    sequence.push({
+      type,
+      price: curr.price,
+      index: curr.index,
+      time: curr.time,
+    });
+  }
+
+  // Classify all swing lows
+  for (let i = 1; i < swingLows.length; i++) {
+    const curr = swingLows[i];
+    const prev = swingLows[i - 1];
+    const type: "HL" | "LL" = curr.price > prev.price ? "HL" : "LL";
+    sequence.push({
+      type,
+      price: curr.price,
+      index: curr.index,
+      time: curr.time,
+    });
+  }
+
+  // Sort by index to get chronological order
+  sequence.sort((a, b) => a.index - b.index);
+
+  return sequence;
+}
+
+// ============================================================
+// CONSOLIDATION DETECTION
+// ============================================================
+
+function detectStructureConsolidation(bars: Bar[]): { detected: boolean; bars: number } {
+  if (bars.length < EXHAUSTION.CONSOLIDATION_MIN_BARS + 14) {
+    return { detected: false, bars: 0 };
+  }
+
+  const highs = bars.map(b => b.high);
+  const lows = bars.map(b => b.low);
+  const closes = bars.map(b => b.close);
+  const currentATR = atr(highs, lows, closes, 14);
+
+  if (currentATR <= 0) {
+    return { detected: false, bars: 0 };
+  }
+
+  // Check recent bars for consolidation pattern
+  let consolidationBars = 0;
+  const minBars = EXHAUSTION.CONSOLIDATION_MIN_BARS;
+
+  for (let i = bars.length - 1; i >= Math.max(0, bars.length - 20); i--) {
+    const lookbackStart = Math.max(0, i - minBars + 1);
+    const window = bars.slice(lookbackStart, i + 1);
+    if (window.length < minBars) break;
+
+    const windowHigh = Math.max(...window.map(b => b.high));
+    const windowLow = Math.min(...window.map(b => b.low));
+    const windowRange = windowHigh - windowLow;
+    const rangeATR = windowRange / currentATR;
+
+    if (rangeATR < EXHAUSTION.CONSOLIDATION_RANGE_ATR) {
+      consolidationBars++;
+    } else {
+      break;
+    }
+  }
+
+  return {
+    detected: consolidationBars >= minBars,
+    bars: consolidationBars,
+  };
 }
 
 // ============================================================
@@ -224,6 +313,14 @@ export function runStructureEngine(
       bullishSweep: false, bearishSweep: false,
       structureConfidence: 0, bullishBias: false, bearishBias: false,
       notes: ["Insufficient data for structure analysis"],
+      // New fields
+      lowerHigh: false,
+      higherLow: false,
+      lowerLow: false,
+      higherHigh: false,
+      swingSequence: [],
+      consolidationDetected: false,
+      consolidationBars: 0,
     };
   }
 
@@ -298,6 +395,16 @@ export function runStructureEngine(
   if (bullishSignals >= 4 || bearishSignals >= 4) structureConfidence += 10;
   structureConfidence = Math.min(100, structureConfidence);
 
+  // --- NEW: Explicit swing classification flags ---
+  const highsClass = classifySwingHighs(primaryHighs);
+  const lowsClass = classifySwingLows(primaryLows);
+
+  // --- NEW: Swing sequence ---
+  const swingSequence = buildSwingSequence(primaryHighs, primaryLows);
+
+  // --- NEW: Consolidation detection ---
+  const consolidation = detectStructureConsolidation(primaryBars);
+
   return {
     m5Trend,
     m15Trend,
@@ -316,5 +423,13 @@ export function runStructureEngine(
     bullishBias,
     bearishBias,
     notes,
+    // New fields
+    lowerHigh: highsClass.lh,
+    higherLow: lowsClass.hl,
+    lowerLow: lowsClass.ll,
+    higherHigh: highsClass.hh,
+    swingSequence,
+    consolidationDetected: consolidation.detected,
+    consolidationBars: consolidation.bars,
   };
 }

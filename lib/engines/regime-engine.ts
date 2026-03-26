@@ -9,13 +9,14 @@ import type {
   MarketRegimeV2, RegimeState
 } from "../types";
 import { adx, ema, atr } from "../math/indicators";
+import { REGIME } from "../config/thresholds";
 
-// Thresholds
-const ADX_TREND_MIN = 22;         // ADX above this = trending market
-const ADX_STRONG_TREND = 35;      // ADX above this = strong trend
-const ADX_CHOP = 18;              // ADX below this = choppy/range
-const ATR_EXPANSION_RATIO = 1.35; // ATR > 1.35x avg = expanding/breakout
-const REVERSAL_CONFIDENCE_MIN = 60; // Min structure confidence to call reversal
+// Thresholds (use centralized config)
+const ADX_TREND_MIN = REGIME.ADX_TREND_MIN;
+const ADX_STRONG_TREND = REGIME.ADX_STRONG_TREND;
+const ADX_CHOP = REGIME.ADX_CHOP;
+const ATR_EXPANSION_RATIO = REGIME.ATR_EXPANSION_RATIO;
+const REVERSAL_CONFIDENCE_MIN = REGIME.REVERSAL_CONFIDENCE_MIN;
 const REGIME_CONFIDENCE_TREND = 75;
 const REGIME_CONFIDENCE_REVERSAL = 65;
 const REGIME_CONFIDENCE_RANGE = 60;
@@ -59,6 +60,44 @@ function computeEMAAlignment(bars: Bar[]): { bullish: boolean; bearish: boolean;
   return { bullish, bearish, neutral: !bullish && !bearish };
 }
 
+/**
+ * Computes EMA50 slope over the specified period.
+ * Returns slope as price change per bar.
+ * Positive = uptrend, Negative = downtrend
+ */
+function computeEmaSlope(bars: Bar[], period = 5): number {
+  if (bars.length < 50 + period) return 0;
+
+  const closes = bars.map(b => b.close);
+  const ema50Arr = ema(closes, 50);
+
+  if (ema50Arr.length < period) return 0;
+
+  const recentEMA = ema50Arr.slice(-period);
+  const firstEMA = recentEMA[0];
+  const lastEMA = recentEMA[recentEMA.length - 1];
+
+  return (lastEMA - firstEMA) / period;
+}
+
+/**
+ * Check if H1 bias aligns with M10 structure
+ */
+function checkHTFAlignment(structure: StructureState): boolean {
+  const h1Bullish = structure.h1Bias === "bullish";
+  const h1Bearish = structure.h1Bias === "bearish";
+  const m10Bullish = structure.bullishBias || structure.bosUp || structure.chochUp;
+  const m10Bearish = structure.bearishBias || structure.bosDown || structure.chochDown;
+
+  // Aligned if both agree on direction
+  if (h1Bullish && m10Bullish) return true;
+  if (h1Bearish && m10Bearish) return true;
+  // Neutral H1 = no conflict
+  if (structure.h1Bias === "neutral") return true;
+
+  return false;
+}
+
 export function runRegimeEngine(
   bars: Bar[],
   structure: StructureState,
@@ -78,6 +117,8 @@ export function runRegimeEngine(
       noTrade: true,
       reasons: ["Data integrity failed: " + dataIntegrity.blockReasons.join("; ")],
       warnings,
+      emaSlope: 0,
+      htfAligned: false,
     };
   }
 
@@ -90,6 +131,8 @@ export function runRegimeEngine(
       noTrade: true,
       reasons: ["Spread unsafe: " + spreadGate.blockReasons.join("; ")],
       warnings,
+      emaSlope: 0,
+      htfAligned: false,
     };
   }
 
@@ -97,6 +140,8 @@ export function runRegimeEngine(
   const { adxVal, plusDI, minusDI } = computeADX(bars);
   const atrRatio = computeATRRatio(bars);
   const emaAlignment = computeEMAAlignment(bars);
+  const emaSlope = computeEmaSlope(bars);
+  const htfAligned = checkHTFAlignment(structure);
 
   // --- Classify regime ---
   let regime: MarketRegimeV2 = "range";
@@ -124,28 +169,49 @@ export function runRegimeEngine(
     confidence = REGIME_CONFIDENCE_REVERSAL;
     reasons.push(`Bearish CHoCH with ${structure.structureConfidence}% structure confidence`);
   }
-  // Priority 3: Bullish trend (BOS up + trend indicators)
+  // Priority 3: Bullish trend (BOS up + trend indicators + slope check)
   else if (structure.bosUp && isTrending && plusDI > minusDI && emaAlignment.bullish) {
     regime = "bullish_trend";
+    // Require minimum EMA slope for full trend confidence
+    const slopeOk = emaSlope > REGIME.EMA_SLOPE_BULLISH_MIN;
     confidence = isStrongTrend ? REGIME_CONFIDENCE_TREND + 10 : REGIME_CONFIDENCE_TREND;
+    if (!slopeOk) {
+      confidence -= 10;
+      warnings.push(`Weak EMA50 slope ${emaSlope.toFixed(3)} < ${REGIME.EMA_SLOPE_BULLISH_MIN}`);
+    }
+    if (!htfAligned) {
+      confidence -= 5;
+      warnings.push("H1 bias not aligned with M10 structure");
+    }
     reasons.push(`Bullish BOS + ADX ${adxVal.toFixed(0)} + EMA alignment`);
   }
-  // Priority 4: Bearish trend
+  // Priority 4: Bearish trend (slope check included)
   else if (structure.bosDown && isTrending && minusDI > plusDI && emaAlignment.bearish) {
     regime = "bearish_trend";
+    const slopeOk = emaSlope < REGIME.EMA_SLOPE_BEARISH_MAX;
     confidence = isStrongTrend ? REGIME_CONFIDENCE_TREND + 10 : REGIME_CONFIDENCE_TREND;
+    if (!slopeOk) {
+      confidence -= 10;
+      warnings.push(`Weak EMA50 slope ${emaSlope.toFixed(3)} > ${REGIME.EMA_SLOPE_BEARISH_MAX}`);
+    }
+    if (!htfAligned) {
+      confidence -= 5;
+      warnings.push("H1 bias not aligned with M10 structure");
+    }
     reasons.push(`Bearish BOS + ADX ${adxVal.toFixed(0)} + EMA alignment`);
   }
   // Priority 5: Bullish trend (structure alone)
   else if (structure.bullishBias && isTrending) {
     regime = "bullish_trend";
     confidence = REGIME_CONFIDENCE_TREND - 5;
+    if (!htfAligned) confidence -= 5;
     reasons.push(`Bullish structure bias + ADX ${adxVal.toFixed(0)}`);
   }
   // Priority 6: Bearish trend (structure alone)
   else if (structure.bearishBias && isTrending) {
     regime = "bearish_trend";
     confidence = REGIME_CONFIDENCE_TREND - 5;
+    if (!htfAligned) confidence -= 5;
     reasons.push(`Bearish structure bias + ADX ${adxVal.toFixed(0)}`);
   }
   // Priority 7: Breakout expansion
@@ -236,5 +302,15 @@ export function runRegimeEngine(
     warnings.push(`Spread cooldown: ${spreadGate.cooldownBarsRemaining} bars`);
   }
 
-  return { regime, confidence, allowBuy, allowSell, noTrade, reasons, warnings };
+  return {
+    regime,
+    confidence,
+    allowBuy,
+    allowSell,
+    noTrade,
+    reasons,
+    warnings,
+    emaSlope,
+    htfAligned,
+  };
 }
