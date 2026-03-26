@@ -9,8 +9,9 @@ interface Consensus { direction: string; agreement: string; netScore: number; vo
 interface Alrt { id: string; timestamp: string; severity: string; title: string; body: string; signal_state: string; master_score: number; trigger_reason: string; channels_sent: string[]; telegram_sent: boolean; }
 interface Acct { balance: number; equity: number; margin: number; free_margin: number; profit: number; positions: Pos[]; }
 interface Health { mt5_connected: boolean; mt5_last_heartbeat: string | null; mt5_last_payload: string | null; total_payloads: number; alerts_count?: number; open_positions: number; daily_pnl: number; }
-interface GoldV2Expl { regimeLabel: string; regimeColor: string; confidencePct: number; buyStatus: string; sellStatus: string; buyBlockReasons: string[]; sellBlockReasons: string[]; spreadLabel: string; spreadSafe: boolean; spreadDetails: { spread: number; atr: number; ratio: number; label: string }; structureNotes: string[]; structureFlags: { bosUp: boolean; bosDown: boolean; chochUp: boolean; chochDown: boolean; bullishSweep: boolean; bearishSweep: boolean }; indicatorSummary: { trend: number; momentum: number; volatility: number; participation: number; divergences: string[] }; actionLabel: string; actionColor: string; actionReasons: string[]; riskSummary: { openBuys: number; openSells: number; wrongSideFreeze: boolean; dailyLock: boolean; drawdownLock: boolean }; dataIntegrityOk: boolean; dataIntegrityIssues: string[]; cooldownActive: boolean; cooldownBarsLeft: number; }
-interface GoldV2State { timestamp: string; regime: { regime: string; confidence: number; allowBuy: boolean; allowSell: boolean; noTrade: boolean; reasons: string[]; warnings: string[] }; spreadGate: { spreadPoints: number; atr: number; spreadToAtr: number; spreadSafe: boolean; spikeDetected: boolean; cooldownBarsRemaining: number; regime: string; blockReasons: string[] }; structure: { m5Trend: string; m15Trend: string; h1Bias: string; bosUp: boolean; bosDown: boolean; chochUp: boolean; chochDown: boolean; bullishSweep: boolean; bearishSweep: boolean; lastSwingHigh?: number; lastSwingLow?: number; structureConfidence: number; notes: string[] }; indicatorMatrix: { trendScore: number; momentumScore: number; volatilityScore: number; participationScore: number; overallBias: number; divergenceWarnings: string[]; summary: string[] }; riskGovernor: { blockAllEntries: boolean; blockBuy: boolean; blockSell: boolean; maxExposureReached: boolean; wrongSideFreeze: boolean; dailyLossLock: boolean; openBuys: number; openSells: number; reasons: string[] }; tradePermission: { allowBuy: boolean; allowSell: boolean; allowNewTrade: boolean; regime: string; confidence: number; blockReasons: string[]; warnings: string[] }; explanation: GoldV2Expl; }
+interface GoldV2Expl { regimeLabel: string; regimeColor: string; confidencePct: number; buyStatus: string; sellStatus: string; buyBlockReasons: string[]; sellBlockReasons: string[]; spreadLabel: string; spreadSafe: boolean; spreadDetails: { spread: number; atr: number; ratio: number; label: string }; structureNotes: string[]; structureFlags: { bosUp: boolean; bosDown: boolean; chochUp: boolean; chochDown: boolean; bullishSweep: boolean; bearishSweep: boolean }; indicatorSummary: { trend: number; momentum: number; volatility: number; participation: number; divergences: string[] }; actionLabel: string; actionColor: string; actionReasons: string[]; riskSummary: { openBuys: number; openSells: number; wrongSideFreeze: boolean; dailyLock: boolean; drawdownLock: boolean }; dataIntegrityOk: boolean; dataIntegrityIssues: string[]; cooldownActive: boolean; cooldownBarsLeft: number; debugPanel?: { regimeState: string; structureState: string; antiTrapState: string; divergenceState: string; spreadGateState: string; exhaustionState: string; finalDecision: string; decisionReasons: string[] }; }
+interface ExhaustionTrap { impulseDetected: boolean; impulseDirection: string | null; impulseSize: number; isExhausted: boolean; inConsolidation: boolean; consolidationBars: number; emaReclaimed: boolean; vwapReclaimed: boolean; bullishDivergence: boolean; bearishDivergence: boolean; blockShort: boolean; blockLong: boolean; reasons: string[]; trapScore: number; }
+interface GoldV2State { timestamp: string; regime: { regime: string; confidence: number; allowBuy: boolean; allowSell: boolean; noTrade: boolean; reasons: string[]; warnings: string[]; emaSlope?: number; htfAligned?: boolean }; spreadGate: { spreadPoints: number; atr: number; spreadToAtr: number; spreadSafe: boolean; spikeDetected: boolean; cooldownBarsRemaining: number; regime: string; blockReasons: string[] }; structure: { m5Trend: string; m15Trend: string; h1Bias: string; bosUp: boolean; bosDown: boolean; chochUp: boolean; chochDown: boolean; bullishSweep: boolean; bearishSweep: boolean; lastSwingHigh?: number; lastSwingLow?: number; structureConfidence: number; notes: string[]; lowerHigh?: boolean; higherLow?: boolean; lowerLow?: boolean; higherHigh?: boolean; consolidationDetected?: boolean; consolidationBars?: number }; indicatorMatrix: { trendScore: number; momentumScore: number; volatilityScore: number; participationScore: number; overallBias: number; divergenceWarnings: string[]; summary: string[] }; riskGovernor: { blockAllEntries: boolean; blockBuy: boolean; blockSell: boolean; maxExposureReached: boolean; wrongSideFreeze: boolean; dailyLossLock: boolean; openBuys: number; openSells: number; reasons: string[]; profitLockRequired?: boolean; stopSizeExceedsLimit?: boolean }; tradePermission: { allowBuy: boolean; allowSell: boolean; allowNewTrade: boolean; regime: string; confidence: number; blockReasons: string[]; warnings: string[] }; explanation: GoldV2Expl; exhaustionTrap?: ExhaustionTrap; }
 interface Dash { timestamp: string; trade_mode: string; health: Health; latest_signal: Sig | null; scan_history: Sig[]; recent_alerts: Alrt[]; trade_history: any[]; market_cache: Record<string, any>; account: Acct | null; notification_channels: Record<string, boolean>; gold_logic?: GoldLogicSnapshot | null; spectre?: SpectreOutput | null; consensus?: Consensus | null; gold_v2?: GoldV2State | null; version?: string; }
 interface SpectreOutput { timestamp: string; symbol: string; price: number; spectre_score: number; state: string; confidence: string; ichimoku: {score:number;meta:Record<string,any>}; squeeze: {score:number;meta:Record<string,any>}; smart_money: {score:number;meta:Record<string,any>}; fibonacci: {score:number;meta:Record<string,any>}; oscillators: {score:number;meta:Record<string,any>}; weights: Record<string,number>; data_quality: string; }
 
@@ -187,11 +188,21 @@ function GoldV2Banner({ v2 }: { v2: GoldV2State }) {
         {e.structureFlags.chochDown && <Bdg t="CHoCH↓" c={C.br} sz="sm" />}
         {e.structureFlags.bullishSweep && <Bdg t="SWEEP↑" c={C.bu} sz="sm" />}
         {e.structureFlags.bearishSweep && <Bdg t="SWEEP↓" c={C.be} sz="sm" />}
+        {v2.structure.higherHigh && <Bdg t="HH" c={C.bu} sz="sm" />}
+        {v2.structure.higherLow && <Bdg t="HL" c={C.bu} sz="sm" />}
+        {v2.structure.lowerHigh && <Bdg t="LH" c={C.be} sz="sm" />}
+        {v2.structure.lowerLow && <Bdg t="LL" c={C.be} sz="sm" />}
       </div>
       {/* Wrong-side freeze warning */}
       {e.riskSummary.wrongSideFreeze && <Bdg t="WRONG-SIDE FREEZE" c={C.wa} sz="sm" />}
       {e.cooldownActive && <Bdg t={`COOLDOWN ${e.cooldownBarsLeft}b`} c={C.wa} sz="sm" />}
       {!e.dataIntegrityOk && <Bdg t="DATA ISSUE" c={C.be} sz="sm" />}
+      {/* Anti-trap warnings */}
+      {v2.exhaustionTrap?.blockShort && <Bdg t="TRAP: NO SHORT" c={C.be} sz="sm" />}
+      {v2.exhaustionTrap?.blockLong && <Bdg t="TRAP: NO LONG" c={C.be} sz="sm" />}
+      {v2.exhaustionTrap?.isExhausted && <Bdg t={`EXHAUST ${v2.exhaustionTrap.impulseSize?.toFixed(1) || "?"}ATR`} c={C.wa} sz="sm" />}
+      {v2.exhaustionTrap?.bullishDivergence && <Bdg t="BULL DIV" c={C.bu} sz="sm" />}
+      {v2.exhaustionTrap?.bearishDivergence && <Bdg t="BEAR DIV" c={C.be} sz="sm" />}
     </div>
   );
 }
@@ -338,6 +349,53 @@ function GoldV2Panel({ v2 }: { v2: GoldV2State }) {
           <div key={i} style={{ fontFamily: F.s, fontSize: 11, color: C.wa, padding: "2px 0" }}>⚠ {w}</div>
         ))}
       </Card>
+
+      {/* Exhaustion & Anti-Trap */}
+      {v2.exhaustionTrap && (
+        <Card title="Anti-Trap Engine">
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+            {v2.exhaustionTrap.blockShort && <Bdg t="BLOCK SHORT" c={C.be} sz="md" />}
+            {v2.exhaustionTrap.blockLong && <Bdg t="BLOCK LONG" c={C.be} sz="md" />}
+            {v2.exhaustionTrap.isExhausted && <Bdg t="EXHAUSTED" c={C.wa} sz="md" />}
+            {v2.exhaustionTrap.inConsolidation && <Bdg t="CONSOLIDATION" c={C.wa} sz="md" />}
+            {v2.exhaustionTrap.bullishDivergence && <Bdg t="BULL DIVERGENCE" c={C.bu} sz="md" />}
+            {v2.exhaustionTrap.bearishDivergence && <Bdg t="BEAR DIVERGENCE" c={C.be} sz="md" />}
+            {v2.exhaustionTrap.emaReclaimed && <Bdg t="EMA RECLAIM" c={C.pu} sz="sm" />}
+            {v2.exhaustionTrap.vwapReclaimed && <Bdg t="VWAP RECLAIM" c={C.pu} sz="sm" />}
+          </div>
+          <DR l="Impulse" v={v2.exhaustionTrap.impulseDetected ? `${v2.exhaustionTrap.impulseDirection?.toUpperCase() || "?"} ${v2.exhaustionTrap.impulseSize.toFixed(1)} ATR` : "None"} c={v2.exhaustionTrap.isExhausted ? C.wa : v2.exhaustionTrap.impulseDetected ? C.t2 : C.t3} />
+          <DR l="Trap Score" v={`${v2.exhaustionTrap.trapScore}/100`} c={v2.exhaustionTrap.trapScore > 50 ? C.be : v2.exhaustionTrap.trapScore > 25 ? C.wa : C.bu} />
+          <DR l="Consolidation" v={v2.exhaustionTrap.inConsolidation ? `${v2.exhaustionTrap.consolidationBars} bars` : "No"} c={v2.exhaustionTrap.inConsolidation ? C.wa : C.t3} />
+          <div style={{ marginTop: 8 }}>
+            {v2.exhaustionTrap.reasons.slice(0, 5).map((r, i) => (
+              <div key={i} style={{ fontFamily: F.s, fontSize: 11, color: r.includes("Block") ? C.be : C.t2, padding: "2px 0", borderBottom: `1px solid ${C.bd}22` }}>→ {r}</div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Structure Swing Flags */}
+      {(v2.structure.lowerHigh || v2.structure.higherLow || v2.structure.lowerLow || v2.structure.higherHigh) && (
+        <Card title="Swing Classification">
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+            {v2.structure.higherHigh && <Bdg t="HH" c={C.bu} sz="md" />}
+            {v2.structure.higherLow && <Bdg t="HL" c={C.bu} sz="md" />}
+            {v2.structure.lowerHigh && <Bdg t="LH" c={C.be} sz="md" />}
+            {v2.structure.lowerLow && <Bdg t="LL" c={C.be} sz="md" />}
+          </div>
+          {v2.structure.consolidationDetected && (
+            <div style={{ padding: "6px 8px", background: `${C.wa}15`, borderRadius: 4, border: `1px solid ${C.wa}22`, marginBottom: 8 }}>
+              <span style={{ fontFamily: F.m, fontSize: 11, color: C.wa }}>Consolidation: {v2.structure.consolidationBars} bars</span>
+            </div>
+          )}
+          {v2.regime.emaSlope !== undefined && (
+            <DR l="EMA50 Slope" v={v2.regime.emaSlope.toFixed(3)} c={v2.regime.emaSlope > 0.15 ? C.bu : v2.regime.emaSlope < -0.15 ? C.be : C.t3} />
+          )}
+          {v2.regime.htfAligned !== undefined && (
+            <DR l="HTF Aligned" v={v2.regime.htfAligned ? "Yes" : "No"} c={v2.regime.htfAligned ? C.bu : C.wa} />
+          )}
+        </Card>
+      )}
     </div>
   );
 }
